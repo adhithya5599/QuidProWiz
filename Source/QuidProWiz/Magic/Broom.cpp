@@ -1,5 +1,6 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
+#pragma once
 
 #include "Broom.h"
 #include "GameFramework/FloatingPawnMovement.h"
@@ -16,6 +17,7 @@
 #include "Kismet/GameplayStatics.h"
 #include "Goal/GoalTargetingComponent.h"
 #include "Goal/GoalRing.h"
+#include "Game/QuidProWizGameStateBase.h"
 
 // Sets default values
 ABroom::ABroom()
@@ -262,13 +264,16 @@ void ABroom::TriggerRagdoll(const FVector& ImpulseDirection, float ImpulseStreng
 void ABroom::PerformMove(float AxisValue)
 {
 	if (bIsStunned) return;
+	if (!IsMatchInProgress()) return;
 	if (!Controller || FMath::IsNearlyZero(AxisValue)) return;
+
 	AddMovementInput(GetActorForwardVector(), AxisValue);
 }
 
 void ABroom::PerformAscend(float AxisValue)
 {
 	if (bIsStunned) return;
+	if (!IsMatchInProgress()) return;
 
 	CurrentAscendInput = AxisValue;
 	if (!Controller) return;
@@ -278,6 +283,7 @@ void ABroom::PerformAscend(float AxisValue)
 void ABroom::PerformTurn(float AxisValue)
 {
 	if (bIsStunned) return;
+	if (!IsMatchInProgress()) return;
 
 	CurrentTurnInput = AxisValue;
 }
@@ -300,6 +306,7 @@ void ABroom::PerformSpeedBoost(bool bIsActive)
 
 void ABroom::PerformPickupQuaffle()
 {
+	if (!IsMatchInProgress()) return;
 	if (HeldQuaffle) return;
 	if (!QuaffleRef) return;
 	if (!QuaffleRef->CanBePickedUpBy(this)) return;
@@ -310,6 +317,7 @@ void ABroom::PerformPickupQuaffle()
 
 void ABroom::PerformThrowQuaffle()
 {
+	if (!IsMatchInProgress()) return;
 	if (!HeldQuaffle) return;
 	if (!GoalTargetingComponent) return;
 
@@ -371,4 +379,11 @@ void ABroom::Respawn()
 	SetActorTransform(RespawnTransform);
 
 	RecoverFromStun();
+}
+
+bool ABroom::IsMatchInProgress() const
+{
+	AQuidProWizGameStateBase* GameState = GetWorld()->GetGameState<AQuidProWizGameStateBase>();
+	if (!GameState) return true;
+	return GameState->CanMove();
 }

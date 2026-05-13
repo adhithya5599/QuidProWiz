@@ -172,4 +172,6 @@ private:
 
 	void DetachRider(const FVector& ImpulseDirection, float ImpulseStrength);
 	void Respawn();
+	
+	bool IsMatchInProgress() const;
 };
