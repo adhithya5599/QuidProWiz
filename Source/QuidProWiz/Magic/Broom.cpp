@@ -28,6 +28,7 @@ ABroom::ABroom()
 	//Create collision component
 	BroomCollisionComponent = CreateDefaultSubobject<UCapsuleComponent>(TEXT("BroomCollisionComponent"));
 	BroomCollisionComponent->InitCapsuleSize(42.f, 96.0f);
+	BroomCollisionComponent->SetGenerateOverlapEvents(true);
 	RootComponent = BroomCollisionComponent;
 
 	//Create mesh component
