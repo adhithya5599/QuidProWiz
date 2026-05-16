@@ -16,19 +16,19 @@ class QUIDPROWIZ_API UGoalTargetingDataAsset : public UDataAsset
 
 public:
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Targeting")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Targeting")
 	float TargetInRange = 2000.f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Targeting")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Targeting")
 	float MaxLockAngleDegrees = 45.f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Targeting")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Targeting")
 	float RetargetInterval = 0.05f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Targeting")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Targeting")
 	float DistanceWeight = 1.f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Targeting")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Targeting")
 	float AngleWeight = 800.f;
 	
 };

@@ -18,6 +18,7 @@
 #include "Goal/GoalTargetingComponent.h"
 #include "Goal/GoalRing.h"
 #include "Game/QuidProWizGameStateBase.h"
+#include "Gym/UI/ZoneUIManager.h"
 
 // Sets default values
 ABroom::ABroom()
@@ -56,6 +57,8 @@ ABroom::ABroom()
 	BroomMovementComponent->MaxSpeed = 1000.f;
 
 	GoalTargetingComponent = CreateDefaultSubobject<UGoalTargetingComponent>(TEXT("GoalTargetingComponent"));
+
+	ZoneUIManager = CreateDefaultSubobject<UZoneUIManager>(TEXT("ZoneUIManager"));
 }
 
 // Called when the game starts or when spawned

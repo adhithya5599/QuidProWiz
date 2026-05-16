@@ -36,14 +36,9 @@ void ATestZone::OnZoneVolumeBeginOverlap(UPrimitiveComponent* OverlappedComponen
 	UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, 
 	const FHitResult& SweepResult)
 {
-	if (bPlayerInZone) return;
-
 	ABroom* Broom = Cast<ABroom>(OtherActor);
-	if (!Broom || !Broom->IsLocallyControlled()) return;
+	if (!Broom) return;
 	
-	bPlayerInZone = true;
-	UE_LOG(LogTemp, Log, TEXT("Player entered zone: %s"), *UEnum::GetValueAsString(ZoneType));
-
 	OnZoneEntered.Broadcast(ZoneType);
 }
 
@@ -51,7 +46,5 @@ void ATestZone::OnZoneVolumeEndOverlap(UPrimitiveComponent* OverlappedComponent,
 	UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
 {
 	ABroom* Broom = Cast<ABroom>(OtherActor);
-	if (!Broom || Broom->IsLocallyControlled()) return;
-
-	bPlayerInZone = false;
+	if (!Broom) return;
 }
