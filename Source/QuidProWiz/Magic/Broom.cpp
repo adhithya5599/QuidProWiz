@@ -13,12 +13,12 @@
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
 #include "InputAction.h"
-#include "Ball/Quaffle.h"
+#include "Quaffle.h"
 #include "Kismet/GameplayStatics.h"
-#include "Goal/GoalTargetingComponent.h"
-#include "Goal/GoalRing.h"
-#include "Game/QuidProWizGameStateBase.h"
-#include "Gym/UI/ZoneUIManager.h"
+#include "GoalTargetingComponent.h"
+#include "GoalRing.h"
+#include "QuidProWizGameStateBase.h"
+#include "UI/ZoneUIManager.h"
 
 // Sets default values
 ABroom::ABroom()

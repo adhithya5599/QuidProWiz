@@ -3,7 +3,7 @@
 
 #include "Bludger.h"
 #include "DataAsset/BludgerDataAsset.h"
-#include "../Broom.h"
+#include "Broom.h"
 #include "Quaffle.h"
 #include "Components/SphereComponent.h"
 #include "Kismet/GameplayStatics.h"

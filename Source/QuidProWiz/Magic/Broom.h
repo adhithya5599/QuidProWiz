@@ -153,8 +153,6 @@ public:
 	void TriggerRagdoll(const FVector& ImpulseDirection, float ImpulseStrength, float RagdollDuration,
 		float RespawnDelay);
 
-protected:
-
 	void PerformMove(float AxisValue);
 	void PerformAscend(float AxisValue);
 	void PerformTurn(float AxisValue);
