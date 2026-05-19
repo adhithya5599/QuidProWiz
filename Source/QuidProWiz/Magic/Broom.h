@@ -19,6 +19,7 @@ class USkeletalMeshComponent;
 class AQuaffle;
 class AGoalRing;
 class UGoalTargetingComponent;
+class UZoneUIManager;
 
 UCLASS()
 class QUIDPROWIZ_API ABroom : public APawn
@@ -134,6 +135,9 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Broom|Targeting")
 	UGoalTargetingComponent* GoalTargetingComponent;
 
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Broom|UI")
+	UZoneUIManager* ZoneUIManager;
+
 public:
 
 	UCameraComponent* GetBroomCamera() const { return BroomCamera; }
@@ -172,4 +176,6 @@ private:
 
 	void DetachRider(const FVector& ImpulseDirection, float ImpulseStrength);
 	void Respawn();
+	
+	bool IsMatchInProgress() const;
 };

@@ -101,7 +101,8 @@ void AGoalRing::RegisterScore(AQuaffle* Quaffle)
 {
 	if (!Quaffle) return;
 
-	const int32 ScoreValue = GoalDataAsset ? GoalDataAsset->ScoreValue : 10;
+	const int32 ScoreValue = ScoreOverride > 0 ? ScoreOverride : 
+		(GoalDataAsset ? GoalDataAsset->ScoreValue : 10);
 
 	Quaffle->NotifyScored();
 	OnGoalScored.Broadcast(this, ScoreValue);
