@@ -76,6 +76,9 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Goal | Gameplay")
 	EGoalTeam OwningTeam = EGoalTeam::TeamA;
 
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Goal | Gameplay")
+	int32 ScoreOverride = 0;
+
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;

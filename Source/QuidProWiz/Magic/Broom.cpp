@@ -18,6 +18,7 @@
 #include "Goal/GoalTargetingComponent.h"
 #include "Goal/GoalRing.h"
 #include "Game/QuidProWizGameStateBase.h"
+#include "Gym/UI/ZoneUIManager.h"
 
 // Sets default values
 ABroom::ABroom()
@@ -28,6 +29,7 @@ ABroom::ABroom()
 	//Create collision component
 	BroomCollisionComponent = CreateDefaultSubobject<UCapsuleComponent>(TEXT("BroomCollisionComponent"));
 	BroomCollisionComponent->InitCapsuleSize(42.f, 96.0f);
+	BroomCollisionComponent->SetGenerateOverlapEvents(true);
 	RootComponent = BroomCollisionComponent;
 
 	//Create mesh component
@@ -55,6 +57,8 @@ ABroom::ABroom()
 	BroomMovementComponent->MaxSpeed = 1000.f;
 
 	GoalTargetingComponent = CreateDefaultSubobject<UGoalTargetingComponent>(TEXT("GoalTargetingComponent"));
+
+	ZoneUIManager = CreateDefaultSubobject<UZoneUIManager>(TEXT("ZoneUIManager"));
 }
 
 // Called when the game starts or when spawned
