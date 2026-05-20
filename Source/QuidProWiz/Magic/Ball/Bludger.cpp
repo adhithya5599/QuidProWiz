@@ -50,6 +50,8 @@ void ABludger::Tick(float DeltaTime)
 void ABludger::OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, 
 	int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
+	if (!bCanHit) return;
+
 	ABroom* HitBroom = Cast<ABroom>(OtherActor);
 	if (!HitBroom) return;
 
@@ -72,6 +74,7 @@ void ABludger::SerchForTarget()
 	for (AActor* Actor : FoundBrooms)
 	{
 		ABroom* Broom = Cast<ABroom>(Actor);
+
 		if (Broom && Broom->IsHoldingQuaffle())
 		{
 			TargetBroom = Broom;

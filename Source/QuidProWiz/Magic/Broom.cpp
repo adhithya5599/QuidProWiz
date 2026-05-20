@@ -241,6 +241,9 @@ void ABroom::TriggerRagdoll(const FVector& ImpulseDirection, float ImpulseStreng
 	RespawnTransform = GetActorTransform();
 
 	DropQuaffle();
+
+	StartPickupCooldown(RespawnDelay);
+
 	ApplyStun(RagdollDuration, 0.f);	
 	DetachRider(ImpulseDirection, ImpulseStrength);
 
@@ -312,6 +315,7 @@ void ABroom::PerformPickupQuaffle()
 {
 	if (!IsMatchInProgress()) return;
 	if (HeldQuaffle) return;
+	if (!CanPickupQuaffle()) return;
 	if (!QuaffleRef) return;
 	if (!QuaffleRef->CanBePickedUpBy(this)) return;
 
@@ -333,6 +337,13 @@ void ABroom::PerformThrowQuaffle()
 	{
 		HeldQuaffle = nullptr;
 	}
+}
+
+void ABroom::StartPickupCooldown(float Duration)
+{
+	bPickupCooldown = true;
+	GetWorldTimerManager().ClearTimer(PickupCooldownTimerHandle);
+	GetWorldTimerManager().SetTimer(PickupCooldownTimerHandle, this, &ABroom::ResetPickupCooldown, Duration, false);
 }
 
 void ABroom::RecoverFromStun()

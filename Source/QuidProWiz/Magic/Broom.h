@@ -164,6 +164,9 @@ public:
 
 	UFloatingPawnMovement* GetBroomMovementComponent() const { return BroomMovementComponent; }
 
+	bool CanPickupQuaffle() const { return !bPickupCooldown; }
+	void StartPickupCooldown(float Duration);
+
 private:
 
 	bool bIsStunned = false;
@@ -175,6 +178,10 @@ private:
 	FTransform RespawnTransform;
 
 	FTransform InitialSpawnTransform;
+
+	bool bPickupCooldown = false;
+	FTimerHandle PickupCooldownTimerHandle;
+	void ResetPickupCooldown() { bPickupCooldown = false; }
 
 	void DetachRider(const FVector& ImpulseDirection, float ImpulseStrength);
 	void Respawn();

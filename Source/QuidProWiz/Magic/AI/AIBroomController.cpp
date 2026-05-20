@@ -114,10 +114,15 @@ AGoalRing* AAIBroomController::FindBestGoal() const
 
 		if (Goal->GetOwningTeam() != EGoalTeam::TeamA) continue;
 
-		const float Distance = FVector::Dist(Broom->GetActorLocation(), Goal->GetActorLocation());
+		const FVector BroomLocation = Broom->GetActorLocation();
+		const float Distance = FVector::Dist(BroomLocation, Goal->GetActorLocation());
 
 		const float GoalValue = Goal->GetScoreOverride() > 0 ? Goal->GetScoreOverride() : 10.f;
-		const float Score = (GoalValue * AIData->HighValueGoalBias) - (Distance * 0.01f);
+
+		const float SideDot = FVector::DotProduct(BroomLocation - Goal->GetActorLocation(), Goal->GetActorForwardVector());
+		const float SideBonus = SideDot < 0.f ? 50.f : 0.f;
+
+		const float Score = (GoalValue * AIData->HighValueGoalBias) + SideBonus - (Distance * 0.01f);
 
 		if (Score > BestScore)
 		{
@@ -139,22 +144,65 @@ void AAIBroomController::FlyToLocation(const FVector& TargetLocation, float Delt
 	ABroom* Broom = GetControlledBroom();
 	if (!Broom || !AIData) return;
 
-	Broom->GetBroomMovementComponent()->MaxSpeed = AIData->FlySpeed;
+	//Broom->GetBroomMovementComponent()->MaxSpeed = AIData->FlySpeed;
+
+	//const FVector CurrentLocation = Broom->GetActorLocation();
+	//const FVector ToTarget = TargetLocation - CurrentLocation;
+	//const float Distance = ToTarget.Size();
+
+	//if (Distance < 50.f)
+	//{
+	//	Broom->PerformMove(0.f);
+	//	Broom->PerformAscend(0.f);
+	//	return;
+	//}
+
+	//const FVector Direction = ToTarget.GetSafeNormal();
+
+	//const FRotator CurrentRotation = Broom->GetActorRotation();
+	//const FRotator TargetRotation = FRotationMatrix::MakeFromX(FVector(Direction.X, Direction.Y, 0.f)).Rotator();
+	//const FRotator NewRotation = FMath::RInterpTo(CurrentRotation, TargetRotation, DeltaTime, AIData->TurnInterpSpeed);
+	//Broom->SetActorRotation(NewRotation);
+
+	//const float ForwardDot = FVector::DotProduct(Broom->GetActorForwardVector(), Direction);
+
+	//const float AlignmentFactor = FMath::Clamp((ForwardDot + 1.f) / 2.f, 0.2f, 1.f);
+	//const float MoveInput = ForwardDot > 0.3f ? 1.f : 0.f;
+
+	//const float SlowDownRadius = 300.f;
+	//const float SpeedFactor = Distance < SlowDownRadius ? FMath::Clamp(Distance / SlowDownRadius, 0.2f, 1.f) : 1.f;
+
+	//Broom->GetBroomMovementComponent()->MaxSpeed = AIData->FlySpeed * SpeedFactor * AlignmentFactor;
+
+	//const float HeightDiff = TargetLocation.Z - CurrentLocation.Z;
+	//const float AscendInput = FMath::Clamp(HeightDiff / 200.f, -1.f, 1.f);
+
+	//Broom->PerformMove(MoveInput);
+	//Broom->PerformAscend(AscendInput);
+	//Broom->PerformTurn(0.f);
 
 	const FVector CurrentLocation = Broom->GetActorLocation();
-	const FVector Direction = (TargetLocation - CurrentLocation).GetSafeNormal();
-	const float Distance = FVector::Dist(CurrentLocation, TargetLocation);
+	const FVector ToTarget = TargetLocation - CurrentLocation;
+	const float Distance = ToTarget.Size();
 
 	if (Distance < 50.f) return;
 
+	const FVector Direction = ToTarget.GetSafeNormal();
 	const FVector Forward = Broom->GetActorForwardVector();
+	const FVector Right = Broom->GetActorRightVector();
+
 	const float ForwardDot = FVector::DotProduct(Forward, Direction);
-	const float RightDot = FVector::DotProduct(Broom->GetActorRightVector(), Direction);
+	const float RightDot = FVector::DotProduct(Right, Direction);
 	const float UpDot = FVector::DotProduct(FVector::UpVector, Direction);
 
-	Broom->PerformMove(ForwardDot > 0.f ? 1.f : -1.f);
+	const float SlowDownRadius = 400.f;
+	const float SpeedFactor = Distance < SlowDownRadius ? FMath::Clamp(Distance / SlowDownRadius, 0.3f, 1.f) : 1.f;
+
+	Broom->GetBroomMovementComponent()->MaxSpeed = AIData->FlySpeed * SpeedFactor;
+
+	Broom->PerformMove(1.f);
+	Broom->PerformTurn(FMath::Clamp(RightDot * 2.f, -1.f, 1.f));
 	Broom->PerformAscend(FMath::Clamp(UpDot * 2.f, -1.f, 1.f));
-	Broom->PerformTurn(FMath::Clamp(RightDot * AIData->TurnInterpSpeed, -1.f, 1.f));
 }
 
 void AAIBroomController::AttemptPickup()
