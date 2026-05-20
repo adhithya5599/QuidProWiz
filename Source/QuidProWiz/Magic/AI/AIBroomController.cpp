@@ -10,6 +10,7 @@
 #include "BehaviorTree/BehaviorTree.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "GameFramework/FloatingPawnMovement.h"
 
 const FName AAIBroomController::BBKey_QuaffleLocation = TEXT("QuaffleLocation");
 const FName AAIBroomController::BBKey_GoalLocation = TEXT("GoalLocation");
@@ -138,6 +139,8 @@ void AAIBroomController::FlyToLocation(const FVector& TargetLocation, float Delt
 	ABroom* Broom = GetControlledBroom();
 	if (!Broom || !AIData) return;
 
+	Broom->GetBroomMovementComponent()->MaxSpeed = AIData->FlySpeed;
+
 	const FVector CurrentLocation = Broom->GetActorLocation();
 	const FVector Direction = (TargetLocation - CurrentLocation).GetSafeNormal();
 	const float Distance = FVector::Dist(CurrentLocation, TargetLocation);
@@ -165,7 +168,26 @@ void AAIBroomController::AttemptPickup()
 void AAIBroomController::AttemptThrow()
 {
 	ABroom* Broom = GetControlledBroom();
-	if (!Broom) return;
+	if (!Broom || !AIData) return;
+
+	const float AccuracyError = 1.f - AIData->ThrowAccuracy;
+	const float ArcBias = FMath::RandRange(1.f - AccuracyError, 1.f + AccuracyError);
+
+	UBlackboardComponent* BB = GetBlackboardComponent();
+	if (!BB) return;
+
+	AGoalRing* TargetGoal = Cast<AGoalRing>(BB->GetValueAsObject(TEXT("TargetGoal")));
+	if (!TargetGoal) return;
+
+	const FVector AimLocation = TargetGoal->GetAimDirection();
+
+	AQuaffle* HeldQuaffle = Broom->GetHeldQuaffle();
+	if (!HeldQuaffle) return;
+
+	if (HeldQuaffle->ThrowToTarget(AimLocation, ArcBias))
+	{
+		Broom->NotifyQuaffleReleased();
+	}
 
 	Broom->PerformThrowQuaffle();
 }

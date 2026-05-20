@@ -160,6 +160,10 @@ public:
 	void PerformPickupQuaffle();
 	void PerformThrowQuaffle();
 
+	AQuaffle* GetHeldQuaffle() const { return HeldQuaffle; }
+
+	UFloatingPawnMovement* GetBroomMovementComponent() const { return BroomMovementComponent; }
+
 private:
 
 	bool bIsStunned = false;

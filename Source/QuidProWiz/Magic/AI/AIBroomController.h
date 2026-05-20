@@ -44,7 +44,7 @@ protected:
 	UPROPERTY(EditDefaultsOnly, Category = "AI")
 	UBehaviorTree* BehaviorTree;
 
-	UPROPERTY(EditDefaultsOnly, Category = "AI")
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "AI")
 	UBroomAIDataAsset* AIData;
 
 private:

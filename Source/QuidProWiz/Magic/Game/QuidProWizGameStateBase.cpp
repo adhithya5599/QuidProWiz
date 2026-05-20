@@ -13,11 +13,8 @@ AQuidProWizGameStateBase::AQuidProWizGameStateBase()
 void AQuidProWizGameStateBase::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
-	UE_LOG(LogTemp, Warning, TEXT("QuidProWizGameStateBase PostInitializeComponents called"));
 
 	AGoalRing::OnGoalScored.AddUObject(this, &AQuidProWizGameStateBase::AddScore);
-	UE_LOG(LogTemp, Warning, TEXT("OnGoalScored delegate bound: %d"),
-		AGoalRing::OnGoalScored.IsBound());
 
 	StartCountdown();
 }
@@ -27,7 +24,6 @@ void AQuidProWizGameStateBase::SetMatchState(TUniquePtr<MatchStateBase> NewState
 	if (!NewState) return;
 
 	CurrentState = MoveTemp(NewState);
-	UE_LOG(LogTemp, Log, TEXT("Match state changed to: %s"), *CurrentState->GetStateName());
 
 	OnMatchStateChanged.Broadcast(CurrentState->GetStateName());
 }
@@ -39,8 +35,6 @@ void AQuidProWizGameStateBase::StartCountdown()
 	CountdownSeconds = CountdownDuration;
 	OnCountdownUpdated.Broadcast(CountdownSeconds);
 	
-	UE_LOG(LogTemp, Log, TEXT("Countdown started: %d seconds"), CountdownSeconds);
-
 	GetWorldTimerManager().ClearTimer(CountdownTimerHandle);
 	GetWorldTimerManager().SetTimer(CountdownTimerHandle, this,
 		&AQuidProWizGameStateBase::OnCountdownTick, 1.f, true);
@@ -65,9 +59,6 @@ void AQuidProWizGameStateBase::StartMatch()
 
 void AQuidProWizGameStateBase::AddScore(AGoalRing* GoalRing, int32 Value)
 {
-	UE_LOG(LogTemp, Warning, TEXT("AddScore called | Value: %d | TeamA: %d | TeamB: %d"),
-		Value, TeamAScore, TeamBScore);
-
 	if (!GoalRing) return;
 
 	// Determine which team scored based on the goal ring's team
