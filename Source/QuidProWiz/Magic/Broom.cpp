@@ -90,9 +90,6 @@ void ABroom::BeginPlay()
 		}
 	}
 
-	AActor* FoundActor = UGameplayStatics::GetActorOfClass(GetWorld(), AQuaffle::StaticClass());
-	QuaffleRef = Cast<AQuaffle>(FoundActor);
-
 	if (!BroomData) return;
 	
 	BroomMovementComponent->MaxSpeed = BroomData->Speed;
@@ -325,11 +322,13 @@ void ABroom::PerformPickupQuaffle()
 	if (!IsMatchInProgress()) return;
 	if (HeldQuaffle) return;
 	if (!CanPickupQuaffle()) return;
-	if (!QuaffleRef) return;
-	if (!QuaffleRef->CanBePickedUpBy(this)) return;
 
-	QuaffleRef->PickUp(this);
-	HeldQuaffle = QuaffleRef;
+	AQuaffle* NearestQuaffle = FindNearestQuaffle();
+	if (!NearestQuaffle) return;
+	if (!NearestQuaffle->CanBePickedUpBy(this)) return;
+
+	NearestQuaffle->PickUp(this);
+	HeldQuaffle = NearestQuaffle;
 
 	if (SoundManager)
 	{
@@ -356,6 +355,31 @@ void ABroom::PerformThrowQuaffle()
 			SoundManager->PlayQuaffleThrow();
 		}
 	}
+}
+
+AQuaffle* ABroom::FindNearestQuaffle() const
+{
+	TArray<AActor*> FoundActors;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AQuaffle::StaticClass(), FoundActors);
+
+	AQuaffle* NearestQuaffle = nullptr;
+	float NearestDistance = TNumericLimits<float>::Max();
+
+	for (AActor* Actor : FoundActors)
+	{
+		AQuaffle* Quaffle = Cast<AQuaffle>(Actor);
+		if (!Quaffle) return nullptr;
+		if (!Quaffle->CanBePickedUp()) continue;
+
+		const float Distance = FVector::Dist(GetActorLocation(), Quaffle->GetActorLocation());
+		if (Distance < NearestDistance)
+		{
+			NearestDistance = Distance;
+			NearestQuaffle = Quaffle;
+		}
+	}
+
+	return NearestQuaffle;
 }
 
 void ABroom::StartPickupCooldown(float Duration)

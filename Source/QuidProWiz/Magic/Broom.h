@@ -108,11 +108,7 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Broom|Rider")
 	USkeletalMeshComponent* RiderMesh;
-
 	AQuaffle* HeldQuaffle = nullptr;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Broom|Quaffle")
-	AQuaffle* QuaffleRef = nullptr;
 
 public:
 
@@ -160,6 +156,8 @@ public:
 	void PerformSpeedBoost(bool bIsActive);
 	void PerformPickupQuaffle();
 	void PerformThrowQuaffle();
+
+	AQuaffle* FindNearestQuaffle() const;
 
 	AQuaffle* GetHeldQuaffle() const { return HeldQuaffle; }
 
