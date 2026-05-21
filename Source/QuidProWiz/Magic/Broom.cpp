@@ -59,6 +59,8 @@ ABroom::ABroom()
 	GoalTargetingComponent = CreateDefaultSubobject<UGoalTargetingComponent>(TEXT("GoalTargetingComponent"));
 
 	ZoneUIManager = CreateDefaultSubobject<UZoneUIManager>(TEXT("ZoneUIManager"));
+
+	SoundManager = CreateDefaultSubobject<USoundManager>(TEXT("SoundManager"));
 }
 
 // Called when the game starts or when spawned
@@ -236,6 +238,13 @@ void ABroom::TriggerRagdoll(const FVector& ImpulseDirection, float ImpulseStreng
 	if (bIsRagDolling) return;
 	if (!RiderMesh) return;
 
+	TriggerBludgerHitShake();
+
+	if (SoundManager)
+	{
+		SoundManager->PlayBroomHitByBludger();
+	}
+
 	bIsRagDolling = true;
 
 	RespawnTransform = GetActorTransform();
@@ -321,6 +330,11 @@ void ABroom::PerformPickupQuaffle()
 
 	QuaffleRef->PickUp(this);
 	HeldQuaffle = QuaffleRef;
+
+	if (SoundManager)
+	{
+		SoundManager->PlayQuafflePickup();
+	}
 }
 
 void ABroom::PerformThrowQuaffle()
@@ -336,6 +350,11 @@ void ABroom::PerformThrowQuaffle()
 	if (HeldQuaffle->ThrowToTarget(AimLocation, 1.f))
 	{
 		HeldQuaffle = nullptr;
+
+		if (SoundManager)
+		{
+			SoundManager->PlayQuaffleThrow();
+		}
 	}
 }
 
@@ -401,4 +420,26 @@ bool ABroom::IsMatchInProgress() const
 	AQuidProWizGameStateBase* GameState = GetWorld()->GetGameState<AQuidProWizGameStateBase>();
 	if (!GameState) return true;
 	return GameState->CanMove();
+}
+
+void ABroom::TriggerBludgerHitShake()
+{
+	//if (!IsLocallyController()) return;
+	if (!BludgerHitShakeClass) return;
+
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC) return;
+
+	PC->ClientStartCameraShake(BludgerHitShakeClass);
+}
+
+void ABroom::TriggerGoalScoredShake()
+{
+	//if (!IsLocallyController()) return;
+	if (!GoalScoredShakeClass) return;
+
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC) return;
+
+	PC->ClientStartCameraShake(GoalScoredShakeClass);
 }

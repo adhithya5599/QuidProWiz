@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
 #include "BroomDataAsset.h"
+#include "SoundManager.h"
 #include "Broom.generated.h"
 
 class UStaticMeshComponent;
@@ -187,4 +188,24 @@ private:
 	void Respawn();
 	
 	bool IsMatchInProgress() const;
+
+public:
+
+	UPROPERTY(EditDefaultsOnly, Category = "Broom|Camera")
+	TSubclassOf<UCameraShakeBase> BludgerHitShakeClass;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Broom|Camera")
+	TSubclassOf<UCameraShakeBase> GoalScoredShakeClass;
+
+	void TriggerBludgerHitShake();
+	void TriggerGoalScoredShake();
+
+protected:
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Broom | Sound")
+	USoundManager* SoundManager;
+
+public:
+
+	USoundManager* GetSoundManager() const { return SoundManager; }
 };

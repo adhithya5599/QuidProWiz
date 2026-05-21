@@ -9,7 +9,8 @@ public class QuidProWiz : ModuleRules
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
 		PublicDependencyModuleNames.AddRange(new string[] 
-		{ "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "AIModule", "GameplayTasks", "NavigationSystem" });
+		{ "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "AIModule", 
+			"GameplayTasks", "NavigationSystem", "CinematicCamera" });
 
 		PrivateDependencyModuleNames.AddRange(new string[] {  });
 
@@ -19,7 +20,8 @@ public class QuidProWiz : ModuleRules
 			"QuidProWiz/Magic/Goal",
 			"QuidProWiz/Magic/AI",
 			"QuidProWiz/Magic/Game",
-			"QuidProWiz/Magic/Gym"
+			"QuidProWiz/Magic/Gym",
+			"QuidProWiz/Magic/Effects"
 		});
 
 		// Uncomment if you are using Slate UI

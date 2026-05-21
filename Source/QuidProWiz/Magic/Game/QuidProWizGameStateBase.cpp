@@ -4,6 +4,7 @@
 #include "QuidProWizGameStateBase.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
+#include "Broom.h"
 
 AQuidProWizGameStateBase::AQuidProWizGameStateBase()
 {
@@ -45,6 +46,27 @@ void AQuidProWizGameStateBase::OnCountdownTick()
 	CountdownSeconds--;
 	OnCountdownUpdated.Broadcast(CountdownSeconds);
 
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (!PC || !PC->IsLocalController()) continue;
+
+		ABroom* Broom = Cast<ABroom>(PC->GetPawn());
+		if (!Broom) continue;
+
+		if (USoundManager* SM = Broom->GetSoundManager())
+		{
+			if (CountdownSeconds > 0)
+			{
+				SM->PlayCountdownBeep();
+			}
+			else
+			{
+				SM->PlayMatchStart();
+			}
+		}
+	}
+
 	if (CountdownSeconds <= 0)
 	{
 		GetWorldTimerManager().ClearTimer(CountdownTimerHandle);
@@ -62,6 +84,8 @@ void AQuidProWizGameStateBase::AddScore(AGoalRing* GoalRing, int32 Value)
 	if (!GoalRing) return;
 
 	// Determine which team scored based on the goal ring's team
+	TriggerGoalScoredShakeForAllPlayers();
+
 	if(GoalRing->GetOwningTeam() == EGoalTeam::TeamA)
 	{
 		TeamAScore += Value;
@@ -87,6 +111,28 @@ void AQuidProWizGameStateBase::AddScore(AGoalRing* GoalRing, int32 Value)
 bool AQuidProWizGameStateBase::CheckWinCondition(int32 Score) const
 {
 	return Score >= ScoreToWin;
+}
+
+void AQuidProWizGameStateBase::TriggerGoalScoredShakeForAllPlayers()
+{
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (!PC || !PC->IsLocalController()) continue;
+
+		APawn* Pawn = PC->GetPawn();
+		if (!Pawn) continue;
+
+		ABroom* Broom = Cast<ABroom>(Pawn);
+		if (!Broom) continue;
+
+		Broom->TriggerGoalScoredShake();
+
+		if (USoundManager* SM = Broom->GetSoundManager())
+		{
+			SM->PlayGoalScored();
+		}
+	}
 }
 
 void AQuidProWizGameStateBase::EndMatch(bool bTeamAWon)
