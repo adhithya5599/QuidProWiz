@@ -3,7 +3,7 @@
 #include "GoalRing.h"
 #include "GameFramework/Pawn.h"
 #include "Camera/CameraComponent.h"
-#include "../Broom.h"
+#include "Broom.h"
 
 UGoalTargetingComponent::UGoalTargetingComponent()
 {

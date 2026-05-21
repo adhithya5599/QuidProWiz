@@ -5,7 +5,7 @@
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
-#include "../Broom.h"
+#include "Broom.h"
 #include "TimerManager.h"
 
 // Sets default values

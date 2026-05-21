@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Pawn.h"
 #include "BroomDataAsset.h"
+#include "SoundManager.h"
 #include "Broom.generated.h"
 
 class UStaticMeshComponent;
@@ -153,14 +154,19 @@ public:
 	void TriggerRagdoll(const FVector& ImpulseDirection, float ImpulseStrength, float RagdollDuration,
 		float RespawnDelay);
 
-protected:
-
 	void PerformMove(float AxisValue);
 	void PerformAscend(float AxisValue);
 	void PerformTurn(float AxisValue);
 	void PerformSpeedBoost(bool bIsActive);
 	void PerformPickupQuaffle();
 	void PerformThrowQuaffle();
+
+	AQuaffle* GetHeldQuaffle() const { return HeldQuaffle; }
+
+	UFloatingPawnMovement* GetBroomMovementComponent() const { return BroomMovementComponent; }
+
+	bool CanPickupQuaffle() const { return !bPickupCooldown; }
+	void StartPickupCooldown(float Duration);
 
 private:
 
@@ -174,8 +180,32 @@ private:
 
 	FTransform InitialSpawnTransform;
 
+	bool bPickupCooldown = false;
+	FTimerHandle PickupCooldownTimerHandle;
+	void ResetPickupCooldown() { bPickupCooldown = false; }
+
 	void DetachRider(const FVector& ImpulseDirection, float ImpulseStrength);
 	void Respawn();
 	
 	bool IsMatchInProgress() const;
+
+public:
+
+	UPROPERTY(EditDefaultsOnly, Category = "Broom|Camera")
+	TSubclassOf<UCameraShakeBase> BludgerHitShakeClass;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Broom|Camera")
+	TSubclassOf<UCameraShakeBase> GoalScoredShakeClass;
+
+	void TriggerBludgerHitShake();
+	void TriggerGoalScoredShake();
+
+protected:
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Broom | Sound")
+	USoundManager* SoundManager;
+
+public:
+
+	USoundManager* GetSoundManager() const { return SoundManager; }
 };

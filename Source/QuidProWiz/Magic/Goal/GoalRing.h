@@ -50,6 +50,8 @@ public:
 
 	EGoalTeam GetOwningTeam() const { return OwningTeam; }
 
+	int32 GetScoreOverride() const { return ScoreOverride; }
+
 protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Goal | Components")

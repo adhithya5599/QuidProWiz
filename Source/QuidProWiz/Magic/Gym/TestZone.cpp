@@ -3,7 +3,7 @@
 
 #include "TestZone.h"
 #include "Components/BoxComponent.h"
-#include "../Broom.h"
+#include "Broom.h"
 
 FOnZoneEntered ATestZone::OnZoneEntered;
 

@@ -13,12 +13,12 @@
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
 #include "InputAction.h"
-#include "Ball/Quaffle.h"
+#include "Quaffle.h"
 #include "Kismet/GameplayStatics.h"
-#include "Goal/GoalTargetingComponent.h"
-#include "Goal/GoalRing.h"
-#include "Game/QuidProWizGameStateBase.h"
-#include "Gym/UI/ZoneUIManager.h"
+#include "GoalTargetingComponent.h"
+#include "GoalRing.h"
+#include "QuidProWizGameStateBase.h"
+#include "UI/ZoneUIManager.h"
 
 // Sets default values
 ABroom::ABroom()
@@ -59,6 +59,8 @@ ABroom::ABroom()
 	GoalTargetingComponent = CreateDefaultSubobject<UGoalTargetingComponent>(TEXT("GoalTargetingComponent"));
 
 	ZoneUIManager = CreateDefaultSubobject<UZoneUIManager>(TEXT("ZoneUIManager"));
+
+	SoundManager = CreateDefaultSubobject<USoundManager>(TEXT("SoundManager"));
 }
 
 // Called when the game starts or when spawned
@@ -236,11 +238,21 @@ void ABroom::TriggerRagdoll(const FVector& ImpulseDirection, float ImpulseStreng
 	if (bIsRagDolling) return;
 	if (!RiderMesh) return;
 
+	TriggerBludgerHitShake();
+
+	if (SoundManager)
+	{
+		SoundManager->PlayBroomHitByBludger();
+	}
+
 	bIsRagDolling = true;
 
 	RespawnTransform = GetActorTransform();
 
 	DropQuaffle();
+
+	StartPickupCooldown(RespawnDelay);
+
 	ApplyStun(RagdollDuration, 0.f);	
 	DetachRider(ImpulseDirection, ImpulseStrength);
 
@@ -312,11 +324,17 @@ void ABroom::PerformPickupQuaffle()
 {
 	if (!IsMatchInProgress()) return;
 	if (HeldQuaffle) return;
+	if (!CanPickupQuaffle()) return;
 	if (!QuaffleRef) return;
 	if (!QuaffleRef->CanBePickedUpBy(this)) return;
 
 	QuaffleRef->PickUp(this);
 	HeldQuaffle = QuaffleRef;
+
+	if (SoundManager)
+	{
+		SoundManager->PlayQuafflePickup();
+	}
 }
 
 void ABroom::PerformThrowQuaffle()
@@ -332,7 +350,19 @@ void ABroom::PerformThrowQuaffle()
 	if (HeldQuaffle->ThrowToTarget(AimLocation, 1.f))
 	{
 		HeldQuaffle = nullptr;
+
+		if (SoundManager)
+		{
+			SoundManager->PlayQuaffleThrow();
+		}
 	}
+}
+
+void ABroom::StartPickupCooldown(float Duration)
+{
+	bPickupCooldown = true;
+	GetWorldTimerManager().ClearTimer(PickupCooldownTimerHandle);
+	GetWorldTimerManager().SetTimer(PickupCooldownTimerHandle, this, &ABroom::ResetPickupCooldown, Duration, false);
 }
 
 void ABroom::RecoverFromStun()
@@ -390,4 +420,26 @@ bool ABroom::IsMatchInProgress() const
 	AQuidProWizGameStateBase* GameState = GetWorld()->GetGameState<AQuidProWizGameStateBase>();
 	if (!GameState) return true;
 	return GameState->CanMove();
+}
+
+void ABroom::TriggerBludgerHitShake()
+{
+	//if (!IsLocallyController()) return;
+	if (!BludgerHitShakeClass) return;
+
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC) return;
+
+	PC->ClientStartCameraShake(BludgerHitShakeClass);
+}
+
+void ABroom::TriggerGoalScoredShake()
+{
+	//if (!IsLocallyController()) return;
+	if (!GoalScoredShakeClass) return;
+
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC) return;
+
+	PC->ClientStartCameraShake(GoalScoredShakeClass);
 }

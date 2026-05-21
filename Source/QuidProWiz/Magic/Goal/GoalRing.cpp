@@ -2,7 +2,7 @@
 
 
 #include "GoalRing.h"
-#include "../Ball/Quaffle.h"
+#include "Quaffle.h"
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SceneComponent.h"
