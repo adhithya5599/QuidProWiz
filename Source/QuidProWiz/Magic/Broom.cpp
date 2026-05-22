@@ -224,6 +224,7 @@ void ABroom::ApplyStun(float Duration, float SpeedMultiplier)
 	if (!BroomData) return;
 
 	bIsStunned = true;
+	OnStunChanged.Broadcast(true);
 
 	BroomMovementComponent->MaxSpeed = BroomData->Speed * SpeedMultiplier;
 	BroomMovementComponent->Acceleration = BroomData->Speed * SpeedMultiplier;
@@ -395,6 +396,7 @@ void ABroom::StartPickupCooldown(float Duration)
 void ABroom::RecoverFromStun()
 {
 	bIsStunned = false;
+	OnStunChanged.Broadcast(false);
 
 	if (!BroomData) return;
 

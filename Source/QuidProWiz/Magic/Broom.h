@@ -214,4 +214,14 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Broom|Effects")
 	float BludgerWarningDistance = 800.f;
+
+public:
+
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnStunChanged, bool, bIsStunned);
+
+	UPROPERTY(BlueprintAssignable, Category = "Broom | Effects")
+	FOnStunChanged OnStunChanged;
+
+	UFUNCTION(BlueprintCallable, Category = "Broom | Effects")
+	bool IsBludgerWarningActive() const { return bBludgerWarningActive; }
 };
