@@ -101,4 +101,6 @@ private:
 	void HandleReturnToMenu();
 
 	bool CheckWinCondition(int32 Score) const;
+
+	void TriggerGoalScoredShakeForAllPlayers();
 };

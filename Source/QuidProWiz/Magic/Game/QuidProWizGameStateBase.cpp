@@ -4,6 +4,7 @@
 #include "QuidProWizGameStateBase.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
+#include "Broom.h"
 
 AQuidProWizGameStateBase::AQuidProWizGameStateBase()
 {
@@ -13,11 +14,8 @@ AQuidProWizGameStateBase::AQuidProWizGameStateBase()
 void AQuidProWizGameStateBase::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
-	UE_LOG(LogTemp, Warning, TEXT("QuidProWizGameStateBase PostInitializeComponents called"));
 
 	AGoalRing::OnGoalScored.AddUObject(this, &AQuidProWizGameStateBase::AddScore);
-	UE_LOG(LogTemp, Warning, TEXT("OnGoalScored delegate bound: %d"),
-		AGoalRing::OnGoalScored.IsBound());
 
 	StartCountdown();
 }
@@ -27,7 +25,6 @@ void AQuidProWizGameStateBase::SetMatchState(TUniquePtr<MatchStateBase> NewState
 	if (!NewState) return;
 
 	CurrentState = MoveTemp(NewState);
-	UE_LOG(LogTemp, Log, TEXT("Match state changed to: %s"), *CurrentState->GetStateName());
 
 	OnMatchStateChanged.Broadcast(CurrentState->GetStateName());
 }
@@ -39,8 +36,6 @@ void AQuidProWizGameStateBase::StartCountdown()
 	CountdownSeconds = CountdownDuration;
 	OnCountdownUpdated.Broadcast(CountdownSeconds);
 	
-	UE_LOG(LogTemp, Log, TEXT("Countdown started: %d seconds"), CountdownSeconds);
-
 	GetWorldTimerManager().ClearTimer(CountdownTimerHandle);
 	GetWorldTimerManager().SetTimer(CountdownTimerHandle, this,
 		&AQuidProWizGameStateBase::OnCountdownTick, 1.f, true);
@@ -50,6 +45,27 @@ void AQuidProWizGameStateBase::OnCountdownTick()
 {
 	CountdownSeconds--;
 	OnCountdownUpdated.Broadcast(CountdownSeconds);
+
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (!PC || !PC->IsLocalController()) continue;
+
+		ABroom* Broom = Cast<ABroom>(PC->GetPawn());
+		if (!Broom) continue;
+
+		if (USoundManager* SM = Broom->GetSoundManager())
+		{
+			if (CountdownSeconds > 0)
+			{
+				SM->PlayCountdownBeep();
+			}
+			else
+			{
+				SM->PlayMatchStart();
+			}
+		}
+	}
 
 	if (CountdownSeconds <= 0)
 	{
@@ -65,12 +81,11 @@ void AQuidProWizGameStateBase::StartMatch()
 
 void AQuidProWizGameStateBase::AddScore(AGoalRing* GoalRing, int32 Value)
 {
-	UE_LOG(LogTemp, Warning, TEXT("AddScore called | Value: %d | TeamA: %d | TeamB: %d"),
-		Value, TeamAScore, TeamBScore);
-
 	if (!GoalRing) return;
 
 	// Determine which team scored based on the goal ring's team
+	TriggerGoalScoredShakeForAllPlayers();
+
 	if(GoalRing->GetOwningTeam() == EGoalTeam::TeamA)
 	{
 		TeamAScore += Value;
@@ -96,6 +111,28 @@ void AQuidProWizGameStateBase::AddScore(AGoalRing* GoalRing, int32 Value)
 bool AQuidProWizGameStateBase::CheckWinCondition(int32 Score) const
 {
 	return Score >= ScoreToWin;
+}
+
+void AQuidProWizGameStateBase::TriggerGoalScoredShakeForAllPlayers()
+{
+	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	{
+		APlayerController* PC = It->Get();
+		if (!PC || !PC->IsLocalController()) continue;
+
+		APawn* Pawn = PC->GetPawn();
+		if (!Pawn) continue;
+
+		ABroom* Broom = Cast<ABroom>(Pawn);
+		if (!Broom) continue;
+
+		Broom->TriggerGoalScoredShake();
+
+		if (USoundManager* SM = Broom->GetSoundManager())
+		{
+			SM->PlayGoalScored();
+		}
+	}
 }
 
 void AQuidProWizGameStateBase::EndMatch(bool bTeamAWon)

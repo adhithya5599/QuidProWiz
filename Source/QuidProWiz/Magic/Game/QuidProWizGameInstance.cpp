@@ -8,7 +8,6 @@ void UQuidProWizGameInstance::HostGame()
 {
 	if (!GetWorld()) return;
 
-	UE_LOG(LogTemp, Log, TEXT("GameInstance: Hosting game on map %s"), *GameMapName);
 	const FString TravelURL = FString::Printf(TEXT("%s?listen"), *GameMapName);
 	GetWorld()->ServerTravel(TravelURL);
 }
@@ -27,6 +26,5 @@ void UQuidProWizGameInstance::JoinGame(const FString& IPAddress)
         FullAddress = FString::Printf(TEXT("%s:7777"), *IPAddress);
     }
 
-    UE_LOG(LogTemp, Log, TEXT("GameInstance: Joining game at %s"), *FullAddress);
     PlayerController->ClientTravel(FullAddress, ETravelType::TRAVEL_Absolute);
 }

@@ -5,7 +5,7 @@
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "GameFramework/ProjectileMovementComponent.h"
-#include "../Broom.h"
+#include "Broom.h"
 #include "TimerManager.h"
 
 // Sets default values
@@ -30,6 +30,10 @@ AQuaffle::AQuaffle()
 
 	CurrentState = MakeUnique<QuaffleStateFree>();
 	PossessingPlayer = nullptr;
+
+	TrailEffect = CreateDefaultSubobject<UNiagaraComponent>(TEXT("TrailEffect"));
+	TrailEffect->SetupAttachment(RootComponent);
+	TrailEffect->SetAutoActivate(false);
 }
 
 // Called when the game starts or when spawned
@@ -110,6 +114,7 @@ void AQuaffle::NotifyScored()
 	DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
 
 	SetState(MakeUnique<QuaffleStateScored>());
+	DeactivateTrail();
 
 	SetActorTransform(InitialSpawnTransform);
 	PossessingPlayer = nullptr;
@@ -161,6 +166,7 @@ bool AQuaffle::LaunchWithVelocity(const FVector& LaunchVelocity, AActor* Previou
 	PossessingPlayer = nullptr;
 	LastThrower = PreviousHolder;
 	SetState(MakeUnique<QuaffleStateThrown>());
+	ActivateTrail();
 
 	CollisionComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	CollisionComponent->SetSimulatePhysics(false);
@@ -227,4 +233,17 @@ void AQuaffle::OnMissRespawn()
 	if (!CurrentState->CanScore()) return;
 
 	NotifyScored();
+}
+
+void AQuaffle::ActivateTrail()
+{
+	if (!TrailEffect || !ThrowTrailSystem) return;
+	TrailEffect->SetAsset(ThrowTrailSystem);
+	TrailEffect->Activate(true);
+}
+
+void AQuaffle::DeactivateTrail()
+{
+	if (!TrailEffect) return;
+	TrailEffect->Deactivate();
 }

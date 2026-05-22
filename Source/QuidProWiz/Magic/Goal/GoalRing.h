@@ -50,6 +50,8 @@ public:
 
 	EGoalTeam GetOwningTeam() const { return OwningTeam; }
 
+	int32 GetScoreOverride() const { return ScoreOverride; }
+
 protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Goal | Components")
@@ -98,4 +100,26 @@ private:
 	bool bLocallyHighlighted = false;
 
 	static TArray<TWeakObjectPtr<AGoalRing>> RegisteredGoals;
+
+	float PulseTimer = 0.f;
+	bool bIsPulsing = false;
+
+	UPROPERTY(EditAnywhere, Category = "Goal | Highlight")
+	float PulseSpeed = 3.f;
+
+	UPROPERTY(EditAnywhere, Category = "Goal | Highlight")
+	float PulseIntensity = 0.3f;
+
+	void UpdatePulse(float DeltaTime);
+
+	void TriggerScoreFlash();
+	void ResetAfterScoreFlash();
+
+	FTimerHandle ScoreFlashTimerHandle;
+
+	UPROPERTY(EditAnywhere, Category = "Goal | Highlight")
+	float ScoreFlashDuration = 0.5f;
+
+	UPROPERTY(EditAnywhere, Category = "Goal | Highlight")
+	UMaterialInterface* ScoreFlashMaterial = nullptr;
 };

@@ -30,4 +30,7 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Goal | Visual")
 	UMaterialInterface* HighlightedMaterial = nullptr;	
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Goal | Visual")
+	UMaterialInterface* ScoreFlashMaterial = nullptr;
 };

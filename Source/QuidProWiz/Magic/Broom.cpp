@@ -13,12 +13,13 @@
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
 #include "InputAction.h"
-#include "Ball/Quaffle.h"
+#include "Quaffle.h"
+#include "Bludger.h"
 #include "Kismet/GameplayStatics.h"
-#include "Goal/GoalTargetingComponent.h"
-#include "Goal/GoalRing.h"
-#include "Game/QuidProWizGameStateBase.h"
-#include "Gym/UI/ZoneUIManager.h"
+#include "GoalTargetingComponent.h"
+#include "GoalRing.h"
+#include "QuidProWizGameStateBase.h"
+#include "UI/ZoneUIManager.h"
 
 // Sets default values
 ABroom::ABroom()
@@ -59,6 +60,8 @@ ABroom::ABroom()
 	GoalTargetingComponent = CreateDefaultSubobject<UGoalTargetingComponent>(TEXT("GoalTargetingComponent"));
 
 	ZoneUIManager = CreateDefaultSubobject<UZoneUIManager>(TEXT("ZoneUIManager"));
+
+	SoundManager = CreateDefaultSubobject<USoundManager>(TEXT("SoundManager"));
 }
 
 // Called when the game starts or when spawned
@@ -88,9 +91,6 @@ void ABroom::BeginPlay()
 		}
 	}
 
-	AActor* FoundActor = UGameplayStatics::GetActorOfClass(GetWorld(), AQuaffle::StaticClass());
-	QuaffleRef = Cast<AQuaffle>(FoundActor);
-
 	if (!BroomData) return;
 	
 	BroomMovementComponent->MaxSpeed = BroomData->Speed;
@@ -111,6 +111,8 @@ void ABroom::Tick(float DeltaTime)
 
 	UpdateHeading(DeltaTime);
 	UpdateMeshTilt(DeltaTime);
+
+	UpdateBludgerWarning(DeltaTime);
 }
 
 void ABroom::UpdateHeading(float DeltaTime)
@@ -222,6 +224,7 @@ void ABroom::ApplyStun(float Duration, float SpeedMultiplier)
 	if (!BroomData) return;
 
 	bIsStunned = true;
+	OnStunChanged.Broadcast(true);
 
 	BroomMovementComponent->MaxSpeed = BroomData->Speed * SpeedMultiplier;
 	BroomMovementComponent->Acceleration = BroomData->Speed * SpeedMultiplier;
@@ -236,11 +239,21 @@ void ABroom::TriggerRagdoll(const FVector& ImpulseDirection, float ImpulseStreng
 	if (bIsRagDolling) return;
 	if (!RiderMesh) return;
 
+	TriggerBludgerHitShake();
+
+	if (SoundManager)
+	{
+		SoundManager->PlayBroomHitByBludger();
+	}
+
 	bIsRagDolling = true;
 
 	RespawnTransform = GetActorTransform();
 
 	DropQuaffle();
+
+	StartPickupCooldown(RespawnDelay);
+
 	ApplyStun(RagdollDuration, 0.f);	
 	DetachRider(ImpulseDirection, ImpulseStrength);
 
@@ -312,11 +325,19 @@ void ABroom::PerformPickupQuaffle()
 {
 	if (!IsMatchInProgress()) return;
 	if (HeldQuaffle) return;
-	if (!QuaffleRef) return;
-	if (!QuaffleRef->CanBePickedUpBy(this)) return;
+	if (!CanPickupQuaffle()) return;
 
-	QuaffleRef->PickUp(this);
-	HeldQuaffle = QuaffleRef;
+	AQuaffle* NearestQuaffle = FindNearestQuaffle();
+	if (!NearestQuaffle) return;
+	if (!NearestQuaffle->CanBePickedUpBy(this)) return;
+
+	NearestQuaffle->PickUp(this);
+	HeldQuaffle = NearestQuaffle;
+
+	if (SoundManager)
+	{
+		SoundManager->PlayQuafflePickup();
+	}
 }
 
 void ABroom::PerformThrowQuaffle()
@@ -332,12 +353,50 @@ void ABroom::PerformThrowQuaffle()
 	if (HeldQuaffle->ThrowToTarget(AimLocation, 1.f))
 	{
 		HeldQuaffle = nullptr;
+
+		if (SoundManager)
+		{
+			SoundManager->PlayQuaffleThrow();
+		}
 	}
+}
+
+AQuaffle* ABroom::FindNearestQuaffle() const
+{
+	TArray<AActor*> FoundActors;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AQuaffle::StaticClass(), FoundActors);
+
+	AQuaffle* NearestQuaffle = nullptr;
+	float NearestDistance = TNumericLimits<float>::Max();
+
+	for (AActor* Actor : FoundActors)
+	{
+		AQuaffle* Quaffle = Cast<AQuaffle>(Actor);
+		if (!Quaffle) return nullptr;
+		if (!Quaffle->CanBePickedUp()) continue;
+
+		const float Distance = FVector::Dist(GetActorLocation(), Quaffle->GetActorLocation());
+		if (Distance < NearestDistance)
+		{
+			NearestDistance = Distance;
+			NearestQuaffle = Quaffle;
+		}
+	}
+
+	return NearestQuaffle;
+}
+
+void ABroom::StartPickupCooldown(float Duration)
+{
+	bPickupCooldown = true;
+	GetWorldTimerManager().ClearTimer(PickupCooldownTimerHandle);
+	GetWorldTimerManager().SetTimer(PickupCooldownTimerHandle, this, &ABroom::ResetPickupCooldown, Duration, false);
 }
 
 void ABroom::RecoverFromStun()
 {
 	bIsStunned = false;
+	OnStunChanged.Broadcast(false);
 
 	if (!BroomData) return;
 
@@ -390,4 +449,43 @@ bool ABroom::IsMatchInProgress() const
 	AQuidProWizGameStateBase* GameState = GetWorld()->GetGameState<AQuidProWizGameStateBase>();
 	if (!GameState) return true;
 	return GameState->CanMove();
+}
+
+void ABroom::TriggerBludgerHitShake()
+{
+	//if (!IsLocallyController()) return;
+	if (!BludgerHitShakeClass) return;
+
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC) return;
+
+	PC->ClientStartCameraShake(BludgerHitShakeClass);
+}
+
+void ABroom::TriggerGoalScoredShake()
+{
+	//if (!IsLocallyController()) return;
+	if (!GoalScoredShakeClass) return;
+
+	APlayerController* PC = Cast<APlayerController>(GetController());
+	if (!PC) return;
+
+	PC->ClientStartCameraShake(GoalScoredShakeClass);
+}
+
+void ABroom::UpdateBludgerWarning(float DeltaTime)
+{
+	if (!IsLocallyControlled()) return;
+
+	AActor* BludgerActor = UGameplayStatics::GetActorOfClass(GetWorld(), ABludger::StaticClass());
+	if (!BludgerActor) return;
+
+	const float Distance = FVector::Dist(GetActorLocation(), BludgerActor->GetActorLocation());
+
+	bBludgerWarningActive = Distance <= BludgerWarningDistance;
+
+	if (bBludgerWarningActive)
+	{
+		DrawDebugSphere(GetWorld(), GetActorLocation(), 100.f, 8, FColor::Red, false, -1.f, 0, 3.f);
+	}
 }
