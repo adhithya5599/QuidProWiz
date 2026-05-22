@@ -72,10 +72,34 @@ void AAIBroomController::UpdateBlackboard()
 	ABroom* Broom = GetControlledBroom();
 	if (!Broom) return;
 
-	if (QuaffleRef)
+	TArray<AActor*> FoundActors;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AQuaffle::StaticClass(), FoundActors);
+
+	AQuaffle* NearestFreeQuaffle = nullptr;
+	float NearestDistance = TNumericLimits<float>::Max();
+
+	for (AActor* Actor : FoundActors)
 	{
-		Blackboard->SetValueAsVector(BBKey_QuaffleLocation, QuaffleRef->GetActorLocation());
-		Blackboard->SetValueAsBool(BBKey_IsQuaffleFree, QuaffleRef->CanBePickedUp());
+		AQuaffle* Quaffle = Cast<AQuaffle>(Actor);
+		if (!Quaffle || !Quaffle->CanBePickedUp()) continue;
+
+		const float Distance = FVector::Dist(Broom->GetActorLocation(), Quaffle->GetActorLocation());
+		
+		if (Distance < NearestDistance)
+		{
+			NearestDistance = Distance;
+			NearestFreeQuaffle = Quaffle;
+		}
+	}
+
+	if (NearestFreeQuaffle)
+	{
+		Blackboard->SetValueAsVector(BBKey_QuaffleLocation, NearestFreeQuaffle->GetActorLocation());
+		Blackboard->SetValueAsBool(BBKey_IsQuaffleFree, NearestFreeQuaffle->CanBePickedUp());
+	}
+	else
+	{
+		Blackboard->SetValueAsBool(BBKey_IsQuaffleFree, false);
 	}
 
 	if (BludgerRef)
@@ -143,43 +167,6 @@ void AAIBroomController::FlyToLocation(const FVector& TargetLocation, float Delt
 {
 	ABroom* Broom = GetControlledBroom();
 	if (!Broom || !AIData) return;
-
-	//Broom->GetBroomMovementComponent()->MaxSpeed = AIData->FlySpeed;
-
-	//const FVector CurrentLocation = Broom->GetActorLocation();
-	//const FVector ToTarget = TargetLocation - CurrentLocation;
-	//const float Distance = ToTarget.Size();
-
-	//if (Distance < 50.f)
-	//{
-	//	Broom->PerformMove(0.f);
-	//	Broom->PerformAscend(0.f);
-	//	return;
-	//}
-
-	//const FVector Direction = ToTarget.GetSafeNormal();
-
-	//const FRotator CurrentRotation = Broom->GetActorRotation();
-	//const FRotator TargetRotation = FRotationMatrix::MakeFromX(FVector(Direction.X, Direction.Y, 0.f)).Rotator();
-	//const FRotator NewRotation = FMath::RInterpTo(CurrentRotation, TargetRotation, DeltaTime, AIData->TurnInterpSpeed);
-	//Broom->SetActorRotation(NewRotation);
-
-	//const float ForwardDot = FVector::DotProduct(Broom->GetActorForwardVector(), Direction);
-
-	//const float AlignmentFactor = FMath::Clamp((ForwardDot + 1.f) / 2.f, 0.2f, 1.f);
-	//const float MoveInput = ForwardDot > 0.3f ? 1.f : 0.f;
-
-	//const float SlowDownRadius = 300.f;
-	//const float SpeedFactor = Distance < SlowDownRadius ? FMath::Clamp(Distance / SlowDownRadius, 0.2f, 1.f) : 1.f;
-
-	//Broom->GetBroomMovementComponent()->MaxSpeed = AIData->FlySpeed * SpeedFactor * AlignmentFactor;
-
-	//const float HeightDiff = TargetLocation.Z - CurrentLocation.Z;
-	//const float AscendInput = FMath::Clamp(HeightDiff / 200.f, -1.f, 1.f);
-
-	//Broom->PerformMove(MoveInput);
-	//Broom->PerformAscend(AscendInput);
-	//Broom->PerformTurn(0.f);
 
 	const FVector CurrentLocation = Broom->GetActorLocation();
 	const FVector ToTarget = TargetLocation - CurrentLocation;

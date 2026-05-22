@@ -108,11 +108,7 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Broom|Rider")
 	USkeletalMeshComponent* RiderMesh;
-
 	AQuaffle* HeldQuaffle = nullptr;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = "Broom|Quaffle")
-	AQuaffle* QuaffleRef = nullptr;
 
 public:
 
@@ -161,6 +157,8 @@ public:
 	void PerformPickupQuaffle();
 	void PerformThrowQuaffle();
 
+	AQuaffle* FindNearestQuaffle() const;
+
 	AQuaffle* GetHeldQuaffle() const { return HeldQuaffle; }
 
 	UFloatingPawnMovement* GetBroomMovementComponent() const { return BroomMovementComponent; }
@@ -202,10 +200,28 @@ public:
 
 protected:
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Broom | Sound")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Broom|Sound")
 	USoundManager* SoundManager;
 
 public:
 
 	USoundManager* GetSoundManager() const { return SoundManager; }
+
+private:
+
+	void UpdateBludgerWarning(float DeltaTime);
+	bool bBludgerWarningActive = false;
+
+	UPROPERTY(EditAnywhere, Category = "Broom|Effects")
+	float BludgerWarningDistance = 800.f;
+
+public:
+
+	DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnStunChanged, bool, bIsStunned);
+
+	UPROPERTY(BlueprintAssignable, Category = "Broom | Effects")
+	FOnStunChanged OnStunChanged;
+
+	UFUNCTION(BlueprintCallable, Category = "Broom | Effects")
+	bool IsBludgerWarningActive() const { return bBludgerWarningActive; }
 };

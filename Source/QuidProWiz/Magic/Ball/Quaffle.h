@@ -5,6 +5,8 @@
 #include "CoreMinimal.h"
 #include "BallBase.h"
 #include "DataAsset/QuaffleDataAsset.h"
+#include "NiagaraComponent.h"
+#include "NiagaraFunctionLibrary.h"
 #include "Quaffle.generated.h"
 
 class UStaticMeshComponent;
@@ -133,8 +135,6 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Quaffle | Network")
 	float PositionBroadcastInterval = 0.016f; // ~60 broadcasts per second
-
-private:
 	
 	FTimerHandle MissRespawnTimerHandle;
 
@@ -142,4 +142,17 @@ private:
 	float MissRespawnDelay = 3.f;
 
 	void OnMissRespawn();
+
+protected:
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Quaffle | Effects")
+	UNiagaraComponent* TrailEffect = nullptr;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Quaffle | Effects")
+	UNiagaraSystem* ThrowTrailSystem = nullptr;
+
+private:
+
+	void ActivateTrail();
+	void DeactivateTrail();
 };

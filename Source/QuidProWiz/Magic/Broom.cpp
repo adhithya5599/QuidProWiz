@@ -14,6 +14,7 @@
 #include "InputActionValue.h"
 #include "InputAction.h"
 #include "Quaffle.h"
+#include "Bludger.h"
 #include "Kismet/GameplayStatics.h"
 #include "GoalTargetingComponent.h"
 #include "GoalRing.h"
@@ -90,9 +91,6 @@ void ABroom::BeginPlay()
 		}
 	}
 
-	AActor* FoundActor = UGameplayStatics::GetActorOfClass(GetWorld(), AQuaffle::StaticClass());
-	QuaffleRef = Cast<AQuaffle>(FoundActor);
-
 	if (!BroomData) return;
 	
 	BroomMovementComponent->MaxSpeed = BroomData->Speed;
@@ -113,6 +111,8 @@ void ABroom::Tick(float DeltaTime)
 
 	UpdateHeading(DeltaTime);
 	UpdateMeshTilt(DeltaTime);
+
+	UpdateBludgerWarning(DeltaTime);
 }
 
 void ABroom::UpdateHeading(float DeltaTime)
@@ -224,6 +224,7 @@ void ABroom::ApplyStun(float Duration, float SpeedMultiplier)
 	if (!BroomData) return;
 
 	bIsStunned = true;
+	OnStunChanged.Broadcast(true);
 
 	BroomMovementComponent->MaxSpeed = BroomData->Speed * SpeedMultiplier;
 	BroomMovementComponent->Acceleration = BroomData->Speed * SpeedMultiplier;
@@ -325,11 +326,13 @@ void ABroom::PerformPickupQuaffle()
 	if (!IsMatchInProgress()) return;
 	if (HeldQuaffle) return;
 	if (!CanPickupQuaffle()) return;
-	if (!QuaffleRef) return;
-	if (!QuaffleRef->CanBePickedUpBy(this)) return;
 
-	QuaffleRef->PickUp(this);
-	HeldQuaffle = QuaffleRef;
+	AQuaffle* NearestQuaffle = FindNearestQuaffle();
+	if (!NearestQuaffle) return;
+	if (!NearestQuaffle->CanBePickedUpBy(this)) return;
+
+	NearestQuaffle->PickUp(this);
+	HeldQuaffle = NearestQuaffle;
 
 	if (SoundManager)
 	{
@@ -358,6 +361,31 @@ void ABroom::PerformThrowQuaffle()
 	}
 }
 
+AQuaffle* ABroom::FindNearestQuaffle() const
+{
+	TArray<AActor*> FoundActors;
+	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AQuaffle::StaticClass(), FoundActors);
+
+	AQuaffle* NearestQuaffle = nullptr;
+	float NearestDistance = TNumericLimits<float>::Max();
+
+	for (AActor* Actor : FoundActors)
+	{
+		AQuaffle* Quaffle = Cast<AQuaffle>(Actor);
+		if (!Quaffle) return nullptr;
+		if (!Quaffle->CanBePickedUp()) continue;
+
+		const float Distance = FVector::Dist(GetActorLocation(), Quaffle->GetActorLocation());
+		if (Distance < NearestDistance)
+		{
+			NearestDistance = Distance;
+			NearestQuaffle = Quaffle;
+		}
+	}
+
+	return NearestQuaffle;
+}
+
 void ABroom::StartPickupCooldown(float Duration)
 {
 	bPickupCooldown = true;
@@ -368,6 +396,7 @@ void ABroom::StartPickupCooldown(float Duration)
 void ABroom::RecoverFromStun()
 {
 	bIsStunned = false;
+	OnStunChanged.Broadcast(false);
 
 	if (!BroomData) return;
 
@@ -442,4 +471,21 @@ void ABroom::TriggerGoalScoredShake()
 	if (!PC) return;
 
 	PC->ClientStartCameraShake(GoalScoredShakeClass);
+}
+
+void ABroom::UpdateBludgerWarning(float DeltaTime)
+{
+	if (!IsLocallyControlled()) return;
+
+	AActor* BludgerActor = UGameplayStatics::GetActorOfClass(GetWorld(), ABludger::StaticClass());
+	if (!BludgerActor) return;
+
+	const float Distance = FVector::Dist(GetActorLocation(), BludgerActor->GetActorLocation());
+
+	bBludgerWarningActive = Distance <= BludgerWarningDistance;
+
+	if (bBludgerWarningActive)
+	{
+		DrawDebugSphere(GetWorld(), GetActorLocation(), 100.f, 8, FColor::Red, false, -1.f, 0, 3.f);
+	}
 }
