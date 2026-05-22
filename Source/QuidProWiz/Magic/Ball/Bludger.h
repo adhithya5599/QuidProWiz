@@ -82,4 +82,11 @@ private:
 
 	float ScoreTarget(ABroom* Broom) const;
 	bool ShouldSwitchTarget(ABroom* NewTarget) const;
+
+	FVector ComputeAvoidanceForce() const;
+	FVector ComputeSeekForce(const FVector& TargetLocation) const;
+	FVector ComputeWanderForce() const;
+
+	FVector CurrentSteering = FVector::ZeroVector;
+	float SteeringInterpSpeed = 5.f;
 };

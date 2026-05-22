@@ -78,4 +78,16 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bludger | Targeting")
 	float TargetLockDuration = 2.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bludger | Avoidance")
+	float ObstacleDetectionRange = 400.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bludger | Avoidance")
+	float ObstacleAvoidanceStrength = 2.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bludger | Avoidance")
+	float AvoidanceSphereRadius = 60.f;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bludger | Avoidance")
+	int32 NumAvoidanceRays = 5;
 };
