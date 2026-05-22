@@ -200,10 +200,18 @@ public:
 
 protected:
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Broom | Sound")
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Broom|Sound")
 	USoundManager* SoundManager;
 
 public:
 
 	USoundManager* GetSoundManager() const { return SoundManager; }
+
+private:
+
+	void UpdateBludgerWarning(float DeltaTime);
+	bool bBludgerWarningActive = false;
+
+	UPROPERTY(EditAnywhere, Category = "Broom|Effects")
+	float BludgerWarningDistance = 800.f;
 };

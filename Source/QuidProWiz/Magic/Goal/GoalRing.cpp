@@ -105,6 +105,7 @@ void AGoalRing::RegisterScore(AQuaffle* Quaffle)
 		(GoalDataAsset ? GoalDataAsset->ScoreValue : 10);
 
 	Quaffle->NotifyScored();
+	TriggerScoreFlash();
 	OnGoalScored.Broadcast(this, ScoreValue);
 }
 
@@ -118,6 +119,48 @@ void AGoalRing::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void AGoalRing::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+
+	if (bLocallyHighlighted)
+	{
+		UpdatePulse(DeltaTime);
+	}
+	else
+	{
+		PulseTimer = 0.f;
+	}
+}
+
+void AGoalRing::UpdatePulse(float DeltaTime)
+{
+	if (!RingMesh) return;
+
+	PulseTimer += DeltaTime * PulseSpeed;
+	const float PulseValue = (FMath::Sin(PulseTimer) + 1.f) / 2.f;
+
+	const float BaseScale = 1.f;
+	const float NewScale = BaseScale + (PulseValue * PulseIntensity);
+	RingMesh->SetRelativeScale3D(FVector(NewScale, NewScale, NewScale));
+}
+
+void AGoalRing::TriggerScoreFlash()
+{
+	if (!RingMesh || !ScoreFlashMaterial) return;
+
+	RingMesh->SetMaterial(0, ScoreFlashMaterial);
+
+	GetWorldTimerManager().ClearTimer(ScoreFlashTimerHandle);
+	GetWorldTimerManager().SetTimer(ScoreFlashTimerHandle, this, 
+		&AGoalRing::ResetAfterScoreFlash, ScoreFlashDuration, false);
+}
+
+void AGoalRing::ResetAfterScoreFlash()
+{
+	if (!RingMesh) return;
+
+	if (GoalDataAsset && GoalDataAsset->NormalMaterial)
+	{
+		RingMesh->SetMaterial(0, GoalDataAsset->NormalMaterial);
+	}
 }
 
 FVector AGoalRing::GetAimDirection() const
@@ -133,6 +176,11 @@ void AGoalRing::SetLocallyHighlighted(bool bHighlighted)
 	bLocallyHighlighted = bHighlighted;
 
 	if (!RingMesh) return;
+
+	if (!bHighlighted)
+	{
+		RingMesh->SetRelativeScale3D(FVector::OneVector);
+	}
 
 	if (bLocallyHighlighted && GoalDataAsset && GoalDataAsset->HighlightedMaterial)
 	{

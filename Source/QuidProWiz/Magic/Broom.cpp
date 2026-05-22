@@ -14,6 +14,7 @@
 #include "InputActionValue.h"
 #include "InputAction.h"
 #include "Quaffle.h"
+#include "Bludger.h"
 #include "Kismet/GameplayStatics.h"
 #include "GoalTargetingComponent.h"
 #include "GoalRing.h"
@@ -110,6 +111,8 @@ void ABroom::Tick(float DeltaTime)
 
 	UpdateHeading(DeltaTime);
 	UpdateMeshTilt(DeltaTime);
+
+	UpdateBludgerWarning(DeltaTime);
 }
 
 void ABroom::UpdateHeading(float DeltaTime)
@@ -466,4 +469,21 @@ void ABroom::TriggerGoalScoredShake()
 	if (!PC) return;
 
 	PC->ClientStartCameraShake(GoalScoredShakeClass);
+}
+
+void ABroom::UpdateBludgerWarning(float DeltaTime)
+{
+	if (!IsLocallyControlled()) return;
+
+	AActor* BludgerActor = UGameplayStatics::GetActorOfClass(GetWorld(), ABludger::StaticClass());
+	if (!BludgerActor) return;
+
+	const float Distance = FVector::Dist(GetActorLocation(), BludgerActor->GetActorLocation());
+
+	bBludgerWarningActive = Distance <= BludgerWarningDistance;
+
+	if (bBludgerWarningActive)
+	{
+		DrawDebugSphere(GetWorld(), GetActorLocation(), 100.f, 8, FColor::Red, false, -1.f, 0, 3.f);
+	}
 }
