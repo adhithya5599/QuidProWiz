@@ -5,6 +5,7 @@
 #include "DataAsset/BludgerDataAsset.h"
 #include "Broom.h"
 #include "Quaffle.h"
+#include "GoalRing.h"
 #include "Components/SphereComponent.h"
 #include "Kismet/GameplayStatics.h"
 #include "TimerManager.h"
@@ -60,29 +61,47 @@ void ABludger::OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* Other
 
 void ABludger::SerchForTarget()
 {
-	if (!QuaffleRef) return;
+	if (!BludgerDataAsset) return;
 
-	if (!QuaffleRef->CanBeThrown())
+	if (bTargetLocked && IsTargetValid())
 	{
-		TargetBroom = nullptr;
-		return;
+		TargetLockTimer -= BludgerDataAsset->SearchInterval;
+		if (TargetLockTimer > 0.f) return;
+		bTargetLocked = false;
 	}
 
 	TArray<AActor*> FoundBrooms;
 	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ABroom::StaticClass(), FoundBrooms);
 
+	ABroom* BestTarget = nullptr;
+	float BestScore = -1.f;
+
 	for (AActor* Actor : FoundBrooms)
 	{
 		ABroom* Broom = Cast<ABroom>(Actor);
+		if (!Broom) return;
 
-		if (Broom && Broom->IsHoldingQuaffle())
+		if (!Broom->IsHoldingQuaffle()) continue;
+
+		const float Score = ScoreTarget(Broom);
+
+		if (Score > BestScore)
 		{
-			TargetBroom = Broom;
-			return;
+			BestScore = Score;
+			BestTarget = Broom;
 		}
 	}
 
-	TargetBroom = nullptr;
+	if (BestTarget && ShouldSwitchTarget(BestTarget))
+	{
+		TargetBroom = BestTarget;
+		bTargetLocked = true;
+		TargetLockTimer = BludgerDataAsset->TargetLockDuration;
+	}
+	else if (!IsTargetValid())
+	{
+		TargetBroom = BestTarget;
+	}
 }
 
 void ABludger::ChaseTarget(float DeltaTime)
@@ -169,6 +188,60 @@ void ABludger::ResetToRandomLocation()
 
 	CurrentVelocity = FVector::ZeroVector;
 	PickNewWanderTarget();
+}
+
+float ABludger::ScoreTarget(ABroom* Broom) const
+{
+	if (!Broom || !BludgerDataAsset) return -1.f;
+
+	float Score = 0.f;
+
+	if (!Broom->IsHoldingQuaffle()) return -1.f;
+	Score += 10.f;
+
+	if (Broom->IsLocallyControlled())
+	{
+		Score += BludgerDataAsset->HumanPlayerPriority * 10.f;
+	}
+
+	float ClosestGoalDistance = TNumericLimits<float>::Max();
+	for (const TWeakObjectPtr<AGoalRing>& GoalPtr : AGoalRing::GetRegisteredGoals())
+	{
+		AGoalRing* Goal = GoalPtr.Get();
+		if (!Goal) continue;
+
+		const float Distance = FVector::Dist(Broom->GetActorLocation(), Goal->GetActorLocation());
+
+		if (Distance < ClosestGoalDistance)
+		{
+			ClosestGoalDistance = Distance;
+		}
+	}
+
+	if (ClosestGoalDistance < TNumericLimits<float>::Max())
+	{
+		const float GoalThreat = FMath::Clamp(1.f - (ClosestGoalDistance / 5000.f), 0.f, 1.f);
+		Score += GoalThreat * BludgerDataAsset->GoalProximityWeight * 10.f;
+	}
+
+	const float DistanceToBroom = FVector::Dist(GetActorLocation(), Broom->GetActorLocation());
+	Score -= DistanceToBroom * 0.001f;
+
+	return Score;
+}
+
+bool ABludger::ShouldSwitchTarget(ABroom* NewTarget) const
+{
+	if (!NewTarget) return false;
+
+	if (!IsTargetValid()) return true;
+
+	if (NewTarget == TargetBroom) return false;
+
+	const float CurrentScore = ScoreTarget(TargetBroom);
+	const float NewScore = ScoreTarget(NewTarget);
+
+	return NewScore > CurrentScore + BludgerDataAsset->TargetSwitchThreshold * 0.01f;
 }
 
 void ABludger::OnHitBroom(ABroom* HitBroom)

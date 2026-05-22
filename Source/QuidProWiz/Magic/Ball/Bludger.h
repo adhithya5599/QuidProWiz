@@ -76,4 +76,10 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Bludger | Gameplay")
 	float ResetHeight = 600.f;
+
+	float TargetLockTimer = 0.f;
+	bool bTargetLocked = false;
+
+	float ScoreTarget(ABroom* Broom) const;
+	bool ShouldSwitchTarget(ABroom* NewTarget) const;
 };
