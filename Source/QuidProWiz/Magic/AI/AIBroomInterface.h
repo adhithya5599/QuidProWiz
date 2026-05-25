@@ -12,10 +12,12 @@ enum class EAIAction : uint8
 	InterceptBludger	UMETA(DisplayName = "Intercept Bludger"),
 	FollowPlayer		UMETA(DisplayName = "Follow Player"),
 	PickupQuaffle		UMETA(DisplayName = "Pickup Quaffle"),
-	ThrowQuaffle		UMETA(DisplayName = "Throw Quaffle")
+	ThrowQuaffle		UMETA(DisplayName = "Throw Quaffle"),
+	FlyToAndPickup		UMETA(DisplayName = "Fly to and Pickup"),
+	FlyToAndThrow		UMETA(DisplayName = "Fly to and Throw")
 };
 
-UINTERFACE(MinimalAPI, Blueprintable)
+UINTERFACE(MinimalAPI)
 class UAIBroomInterface : public UInterface
 {
 	GENERATED_BODY()

@@ -28,6 +28,8 @@ public:
 			case EAIAction::EvadeBludger:
 			case EAIAction::PickupQuaffle:
 			case EAIAction::ThrowQuaffle:
+			case EAIAction::FlyToAndPickup:
+			case EAIAction::FlyToAndThrow:
 				return true;
 			default:
 				return false;
