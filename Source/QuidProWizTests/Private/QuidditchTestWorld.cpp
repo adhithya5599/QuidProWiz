@@ -8,6 +8,8 @@
 #include "DataAsset/QuaffleDataAsset.h"
 #include "Bludger.h"
 #include "DataAsset/BludgerDataAsset.h"
+#include "Snitch.h"
+#include "DataAsset/SnitchDataAsset.h"
 #include "DataAsset/GoalRingDataAsset.h"
 #include "QuidProWizGameStateBase.h"
 #include "AIBroomController.h"
@@ -109,6 +111,14 @@ ABludger* FQuidditchTestWorld::SpawnBludger(const FVector& Location)
 	return SpawnConfigured<ABludger>(FTransform(Location), [](ABludger& Bludger)
 	{
 		SetObjectProperty(&Bludger, TEXT("BludgerDataAsset"), NewObject<UBludgerDataAsset>(GetTransientPackage()));
+	});
+}
+
+ASnitch* FQuidditchTestWorld::SpawnSnitch(const FVector& Location)
+{
+	return SpawnConfigured<ASnitch>(FTransform(Location), [](ASnitch& Snitch)
+	{
+		SetObjectProperty(&Snitch, TEXT("SnitchData"), NewObject<USnitchDataAsset>(GetTransientPackage()));
 	});
 }
 

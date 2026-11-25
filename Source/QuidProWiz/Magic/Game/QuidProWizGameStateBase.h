@@ -5,20 +5,27 @@
 #include "CoreMinimal.h"
 #include "GameFramework/GameStateBase.h"
 #include "Match/MatchState.h"
+#include "QuidditchTeam.h"
 #include "QuidProWizGameStateBase.generated.h"
 
 class AGoalRing;
 class ABroom;
+class ASnitch;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnScoreUpdated, int32, TeamAScore, int32, TeamBScore);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnMatchStateChanged, FString, NewStateName);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnMatchEnded, bool, bTeamWon, int32, WinningScore);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnCountdownUpdated, int32, SecondsRemaining);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnSnitchReleased);
 
 /**
- * Owns the match rules and flow. The server runs the countdown, scoring and win check; the
- * phase, scores and countdown replicate, and every machine raises the UI delegates and local
- * feedback (sounds, camera shake) from the OnRep handlers.
+ * Owns the match rules and flow. The server runs the countdown, scoring, Snitch release and the
+ * win decision; the phase, scores and countdown replicate, and every machine raises the UI
+ * delegates and local feedback (sounds, camera shake) from the OnRep handlers.
+ *
+ * Win rule: catching the Snitch ends the match and the catcher's team wins regardless of score.
+ * The Snitch is released when a team reaches SnitchReleaseScore or at a random time, whichever
+ * comes first. ScoreToWin is an optional extra rule (off by default).
  */
 UCLASS()
 class QUIDPROWIZ_API AQuidProWizGameStateBase : public AGameStateBase
@@ -44,6 +51,9 @@ public:
 
 	UPROPERTY(BlueprintAssignable, Category = "Match")
 	FOnCountdownUpdated OnCountdownUpdated;
+
+	UPROPERTY(BlueprintAssignable, Category = "Match|Snitch")
+	FOnSnitchReleased OnSnitchReleased;
 
 	// --- Queries ------------------------------------------------------------------------------
 
@@ -74,22 +84,55 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Match")
 	int32 GetScoreToWin() const { return ScoreToWin; }
 
-	/** Server: credit a goal. Ignored outside the InProgress phase. */
+	UFUNCTION(BlueprintPure, Category = "Match|Snitch")
+	bool IsSnitchReleased() const { return bSnitchReleased; }
+
+	UFUNCTION(BlueprintPure, Category = "Match|Snitch")
+	bool WasEndedBySnitch() const { return bEndedBySnitch; }
+
+	/** Winner once the match has ended. */
+	UFUNCTION(BlueprintPure, Category = "Match")
+	EGoalTeam GetWinningTeam() const { return bTeamAWon ? EGoalTeam::TeamA : EGoalTeam::TeamB; }
+
+	/** Server: credit a goal to the team attacking GoalRing. Ignored outside the InProgress phase. */
 	void AddScore(AGoalRing* GoalRing, int32 Value);
+
+	/** Server: release the Snitch now (if it hasn't been already). */
+	void ReleaseSnitch();
 
 protected:
 
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Match")
-	int32 ScoreToWin = 150;
+	/** Optional: end the match when a team reaches this score. 0 = off (only the Snitch ends a match). */
+	UPROPERTY(EditDefaultsOnly, Category = "Match", meta = (ClampMin = "0"))
+	int32 ScoreToWin = 0;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Match")
 	int32 CountdownDuration = 3;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Match")
 	float ReturnMenuDelay = 5.f;
+
+	/** Snitch spawned at the arena centre when no Snitch is placed in the level. */
+	UPROPERTY(EditDefaultsOnly, Category = "Match|Snitch")
+	TSubclassOf<ASnitch> SnitchClass;
+
+	/** Release the Snitch when either team reaches this score. 0 = never by score. */
+	UPROPERTY(EditDefaultsOnly, Category = "Match|Snitch", meta = (ClampMin = "0"))
+	int32 SnitchReleaseScore = 100;
+
+	/** Release the Snitch at a random time between these (seconds after the match starts). Max 0 = never by time. */
+	UPROPERTY(EditDefaultsOnly, Category = "Match|Snitch", meta = (ClampMin = "0"))
+	float SnitchReleaseTimeMin = 60.f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Match|Snitch", meta = (ClampMin = "0"))
+	float SnitchReleaseTimeMax = 180.f;
+
+	/** Height above the arena centre at which a spawned Snitch appears. */
+	UPROPERTY(EditDefaultsOnly, Category = "Match|Snitch")
+	float SnitchSpawnHeight = 600.f;
 
 private:
 
@@ -107,6 +150,15 @@ private:
 
 	UPROPERTY(Replicated)
 	bool bTeamAWon = false;
+
+	UPROPERTY(ReplicatedUsing = OnRep_SnitchReleased)
+	bool bSnitchReleased = false;
+
+	UPROPERTY(Replicated)
+	bool bEndedBySnitch = false;
+
+	UFUNCTION()
+	void OnRep_SnitchReleased();
 
 	UFUNCTION()
 	void OnRep_MatchPhase();
@@ -129,7 +181,10 @@ private:
 	void OnCountdownTick();
 	void EndMatch(bool bTeamAWins);
 	void HandleReturnToMenu();
-	bool CheckWinCondition(int32 Score) const { return Score >= ScoreToWin; }
+	bool CheckWinCondition(int32 Score) const { return ScoreToWin > 0 && Score >= ScoreToWin; }
+
+	void ScheduleSnitchRelease();
+	void HandleSnitchCaught(ASnitch* Snitch, ABroom* Catcher);
 
 	void HandleScoreChanged(int32 OldScore, int32 NewScore);
 
@@ -137,6 +192,8 @@ private:
 	void ForEachLocalPlayerBroom(TFunctionRef<void(ABroom&)> Func) const;
 
 	FDelegateHandle GoalScoredHandle;
+	FDelegateHandle SnitchCaughtHandle;
+	FTimerHandle SnitchReleaseTimerHandle;
 	FTimerHandle CountdownTimerHandle;
 	FTimerHandle ReturnToMenuTimerHandle;
 };

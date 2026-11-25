@@ -40,6 +40,11 @@ void AAIBroomController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
 
+	if (ABroom* Broom = GetControlledBroom())
+	{
+		Broom->SetTeam(Team);
+	}
+
 	if (AIData && BehaviorTree)
 	{
 		RunBehaviorTree(BehaviorTree);
@@ -133,8 +138,8 @@ AGoalRing* AAIBroomController::FindBestGoal() const
 	{
 		if (!Goal->IsGoalEnabled()) continue;
 
-		// TODO(teams): opponents currently always attack Team A rings; derive from team assignment.
-		if (Goal->GetOwningTeam() != EGoalTeam::TeamA) continue;
+		// Attack the other team's rings only.
+		if (Goal->GetOwningTeam() == Broom->GetTeam()) continue;
 
 		const float Distance = FVector::Dist(BroomLocation, Goal->GetActorLocation());
 		const float SideDot = FVector::DotProduct(BroomLocation - Goal->GetActorLocation(), Goal->GetActorForwardVector());

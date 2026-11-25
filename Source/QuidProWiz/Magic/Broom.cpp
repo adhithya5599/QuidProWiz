@@ -73,6 +73,7 @@ void ABroom::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimePr
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(ABroom, HeldQuaffle);
+	DOREPLIFETIME(ABroom, Team);
 	DOREPLIFETIME(ABroom, bIsStunned);
 	DOREPLIFETIME(ABroom, StunSpeedMultiplier);
 }
@@ -262,6 +263,14 @@ void ABroom::PerformSpeedBoost(bool bIsActive)
 	if (UBroomMovementComponent* Movement = GetBroomMovement())
 	{
 		Movement->SetWantsToBoost(bIsActive);
+	}
+}
+
+void ABroom::SetTeam(EGoalTeam NewTeam)
+{
+	if (HasAuthority())
+	{
+		Team = NewTeam;
 	}
 }
 

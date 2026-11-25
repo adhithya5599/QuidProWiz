@@ -56,6 +56,10 @@ bool UGoalTargetingComponent::IsGoalValidTarget(const AGoalRing* Goal, const FVe
 {
 	if (!Goal || !Goal->IsGoalEnabled() || !TargetingDataAsset) return false;
 
+	// Only aim at rings the other team defends.
+	const ABroom* OwnerBroom = Cast<ABroom>(GetOwner());
+	if (OwnerBroom && Goal->GetOwningTeam() == OwnerBroom->GetTeam()) return false;
+
 	const FVector ToCamera = (CameraLocation - Goal->GetActorLocation()).GetSafeNormal();
 	const float GoalFacingDot = FVector::DotProduct(ToCamera, Goal->GetActorForwardVector());
 	if (GoalFacingDot >= 0.f) return false;

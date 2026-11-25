@@ -10,6 +10,7 @@ class UQuidditchWorldSubsystem;
 class ABroom;
 class AQuaffle;
 class ABludger;
+class ASnitch;
 class AQuidProWizGameStateBase;
 
 /**
@@ -42,6 +43,7 @@ public:
 	ABroom* SpawnBroom(const FVector& Location, const FRotator& Rotation = FRotator::ZeroRotator);
 	AQuaffle* SpawnQuaffle(const FVector& Location);
 	ABludger* SpawnBludger(const FVector& Location);
+	ASnitch* SpawnSnitch(const FVector& Location);
 	AGoalRing* SpawnGoal(const FVector& Location, const FRotator& Rotation, EGoalTeam Team = EGoalTeam::TeamA);
 
 	/** Gives Broom an AI controller so Perform* input moves it, like a player or bot would. */

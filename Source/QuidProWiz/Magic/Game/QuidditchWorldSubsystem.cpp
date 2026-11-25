@@ -6,6 +6,7 @@
 #include "Quaffle.h"
 #include "Bludger.h"
 #include "Broom.h"
+#include "Snitch.h"
 
 namespace QuidditchRegistry
 {
@@ -72,6 +73,21 @@ void UQuidditchWorldSubsystem::RegisterBludger(ABludger* Bludger) { QuidditchReg
 void UQuidditchWorldSubsystem::UnregisterBludger(ABludger* Bludger) { QuidditchRegistry::Remove(Bludgers, Bludger); }
 void UQuidditchWorldSubsystem::RegisterBroom(ABroom* Broom) { QuidditchRegistry::Add(Brooms, Broom); }
 void UQuidditchWorldSubsystem::UnregisterBroom(ABroom* Broom) { QuidditchRegistry::Remove(Brooms, Broom); }
+void UQuidditchWorldSubsystem::RegisterSnitch(ASnitch* Snitch) { QuidditchRegistry::Add(Snitches, Snitch); }
+void UQuidditchWorldSubsystem::UnregisterSnitch(ASnitch* Snitch) { QuidditchRegistry::Remove(Snitches, Snitch); }
+
+FVector UQuidditchWorldSubsystem::GetArenaCenter() const
+{
+	const TArray<AGoalRing*> AllGoals = GetGoals();
+	if (AllGoals.Num() == 0) return FVector::ZeroVector;
+
+	FVector Sum = FVector::ZeroVector;
+	for (const AGoalRing* Goal : AllGoals)
+	{
+		Sum += Goal->GetActorLocation();
+	}
+	return Sum / AllGoals.Num();
+}
 
 AQuaffle* UQuidditchWorldSubsystem::FindNearestFreeQuaffle(const FVector& Location, float* OutDistance) const
 {
