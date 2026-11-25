@@ -87,23 +87,37 @@ void FQuidditchMatchFlowSpec::Define()
 		It("ignores goals before the match starts", [this]()
 		{
 			ScoreOn(TeamAGoal);
-			TestEqual(TEXT("Team A score"), GameState->GetTeamAScore(), 0);
+			TestEqual(TEXT("Team B score"), GameState->GetTeamBScore(), 0);
 		});
 
-		It("credits the team that owns the ring", [this]()
+		It("credits the team attacking the ring, not the one defending it", [this]()
 		{
 			FinishCountdown();
 			ScoreOn(TeamAGoal);
 			ScoreOn(TeamBGoal);
 			ScoreOn(TeamBGoal);
 
-			TestEqual(TEXT("Team A"), GameState->GetTeamAScore(), 10);
-			TestEqual(TEXT("Team B"), GameState->GetTeamBScore(), 20);
+			TestEqual(TEXT("Team B scored once into Team A's ring"), GameState->GetTeamBScore(), 10);
+			TestEqual(TEXT("Team A scored twice into Team B's ring"), GameState->GetTeamAScore(), 20);
 		});
 	});
 
 	Describe("Winning", [this]()
 	{
+		It("never ends on score when the score target is off (the default)", [this]()
+		{
+			FQuidditchTestWorld::SetPropertyValue(GameState, TEXT("ScoreToWin"), 0);
+			FQuidditchTestWorld::SetPropertyValue(GameState, TEXT("SnitchReleaseScore"), 0);
+			FinishCountdown();
+			for (int32 Goal = 0; Goal < 30; ++Goal)
+			{
+				ScoreOn(TeamBGoal);
+			}
+
+			TestEqual(TEXT("Team A scored 300"), GameState->GetTeamAScore(), 300);
+			TestTrue(TEXT("Still in progress"), GameState->GetMatchPhase() == EMatchPhase::InProgress);
+		});
+
 		It("ends the match when a team reaches the target score", [this]()
 		{
 			FinishCountdown();
@@ -126,7 +140,7 @@ void FQuidditchMatchFlowSpec::Define()
 			}
 
 			ScoreOn(TeamAGoal);
-			TestEqual(TEXT("Score frozen at the winning total"), GameState->GetTeamAScore(), ScoreToWin);
+			TestEqual(TEXT("Score frozen at the winning total"), GameState->GetTeamBScore(), ScoreToWin);
 		});
 	});
 }

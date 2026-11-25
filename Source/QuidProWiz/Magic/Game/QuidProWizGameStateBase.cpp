@@ -4,6 +4,7 @@
 #include "QuidditchWorldSubsystem.h"
 #include "GoalRing.h"
 #include "Broom.h"
+#include "Snitch.h"
 #include "SoundManager.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
@@ -12,6 +13,7 @@
 
 AQuidProWizGameStateBase::AQuidProWizGameStateBase()
 {
+	SnitchClass = ASnitch::StaticClass();
 }
 
 void AQuidProWizGameStateBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -23,6 +25,8 @@ void AQuidProWizGameStateBase::GetLifetimeReplicatedProps(TArray<FLifetimeProper
 	DOREPLIFETIME(AQuidProWizGameStateBase, TeamBScore);
 	DOREPLIFETIME(AQuidProWizGameStateBase, CountdownSeconds);
 	DOREPLIFETIME(AQuidProWizGameStateBase, bTeamAWon);
+	DOREPLIFETIME(AQuidProWizGameStateBase, bSnitchReleased);
+	DOREPLIFETIME(AQuidProWizGameStateBase, bEndedBySnitch);
 }
 
 void AQuidProWizGameStateBase::BeginPlay()
@@ -34,6 +38,7 @@ void AQuidProWizGameStateBase::BeginPlay()
 	if (UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
 	{
 		GoalScoredHandle = Subsystem->OnGoalScored.AddUObject(this, &AQuidProWizGameStateBase::AddScore);
+		SnitchCaughtHandle = Subsystem->OnSnitchCaught.AddUObject(this, &AQuidProWizGameStateBase::HandleSnitchCaught);
 	}
 
 	StartCountdown();
@@ -44,8 +49,10 @@ void AQuidProWizGameStateBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
 	{
 		Subsystem->OnGoalScored.Remove(GoalScoredHandle);
+		Subsystem->OnSnitchCaught.Remove(SnitchCaughtHandle);
 	}
 
+	GetWorldTimerManager().ClearTimer(SnitchReleaseTimerHandle);
 	GetWorldTimerManager().ClearTimer(CountdownTimerHandle);
 	GetWorldTimerManager().ClearTimer(ReturnToMenuTimerHandle);
 	Super::EndPlay(EndPlayReason);
@@ -92,6 +99,7 @@ void AQuidProWizGameStateBase::OnCountdownTick()
 	{
 		GetWorldTimerManager().ClearTimer(CountdownTimerHandle);
 		SetMatchPhase(EMatchPhase::InProgress);
+		ScheduleSnitchRelease();
 	}
 }
 
@@ -125,12 +133,18 @@ void AQuidProWizGameStateBase::AddScore(AGoalRing* GoalRing, int32 Value)
 {
 	if (!HasAuthority() || !GoalRing || !CanScore()) return;
 
-	const bool bTeamA = GoalRing->GetOwningTeam() == EGoalTeam::TeamA;
+	// Rings belong to the team defending them, so a goal scores for the other team.
+	const bool bTeamA = GoalRing->GetScoringTeam() == EGoalTeam::TeamA;
 	int32& TeamScore = bTeamA ? TeamAScore : TeamBScore;
 
 	const int32 OldScore = TeamScore;
 	TeamScore += Value;
 	HandleScoreChanged(OldScore, TeamScore);
+
+	if (!bSnitchReleased && SnitchReleaseScore > 0 && TeamScore >= SnitchReleaseScore)
+	{
+		ReleaseSnitch();
+	}
 
 	if (CheckWinCondition(TeamScore))
 	{
@@ -165,11 +179,82 @@ void AQuidProWizGameStateBase::HandleScoreChanged(int32 OldScore, int32 NewScore
 	});
 }
 
+// --- Snitch -----------------------------------------------------------------------------------
+
+void AQuidProWizGameStateBase::ScheduleSnitchRelease()
+{
+	if (!HasAuthority() || SnitchReleaseTimeMax <= 0.f) return;
+
+	const float Delay = FMath::FRandRange(FMath::Min(SnitchReleaseTimeMin, SnitchReleaseTimeMax), SnitchReleaseTimeMax);
+	GetWorldTimerManager().ClearTimer(SnitchReleaseTimerHandle);
+	GetWorldTimerManager().SetTimer(SnitchReleaseTimerHandle, this, &AQuidProWizGameStateBase::ReleaseSnitch,
+		FMath::Max(Delay, KINDA_SMALL_NUMBER), false);
+}
+
+void AQuidProWizGameStateBase::ReleaseSnitch()
+{
+	if (!HasAuthority() || bSnitchReleased || MatchPhase != EMatchPhase::InProgress) return;
+
+	UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this);
+	if (!Subsystem) return;
+
+	GetWorldTimerManager().ClearTimer(SnitchReleaseTimerHandle);
+	const FVector ArenaCenter = Subsystem->GetArenaCenter();
+
+	// Prefer Snitches placed in the level; otherwise spawn one above the middle of the pitch.
+	bool bReleasedAny = false;
+	for (ASnitch* Snitch : Subsystem->GetSnitches())
+	{
+		if (Snitch->GetSnitchState() == ESnitchState::Dormant)
+		{
+			Snitch->Release(ArenaCenter);
+			bReleasedAny = true;
+		}
+	}
+
+	if (!bReleasedAny && SnitchClass)
+	{
+		FActorSpawnParameters Params;
+		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		const FVector SpawnLocation = ArenaCenter + FVector(0.f, 0.f, SnitchSpawnHeight);
+
+		if (ASnitch* Snitch = GetWorld()->SpawnActor<ASnitch>(SnitchClass, SpawnLocation, FRotator::ZeroRotator, Params))
+		{
+			Snitch->Release(ArenaCenter);
+			bReleasedAny = true;
+		}
+	}
+
+	if (bReleasedAny)
+	{
+		bSnitchReleased = true;
+		OnRep_SnitchReleased();
+	}
+}
+
+void AQuidProWizGameStateBase::OnRep_SnitchReleased()
+{
+	if (bSnitchReleased)
+	{
+		OnSnitchReleased.Broadcast();
+	}
+}
+
+void AQuidProWizGameStateBase::HandleSnitchCaught(ASnitch* Snitch, ABroom* Catcher)
+{
+	if (!HasAuthority() || !Catcher || MatchPhase != EMatchPhase::InProgress) return;
+
+	// The catch wins the match for the catcher's team, whatever the score.
+	bEndedBySnitch = true;
+	EndMatch(Catcher->GetTeam() == EGoalTeam::TeamA);
+}
+
 // --- End of match -----------------------------------------------------------------------------
 
 void AQuidProWizGameStateBase::EndMatch(bool bTeamAWins)
 {
 	bTeamAWon = bTeamAWins;
+	GetWorldTimerManager().ClearTimer(SnitchReleaseTimerHandle);
 	SetMatchPhase(EMatchPhase::MatchEnded); // CanMove() is now false everywhere, so input stops.
 
 	GetWorldTimerManager().ClearTimer(ReturnToMenuTimerHandle);

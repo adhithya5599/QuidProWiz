@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "AIController.h"
+#include "QuidditchTeam.h"
 #include "AIBroomController.generated.h"
 
 class UBehaviorTree;
@@ -55,6 +56,10 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "AI")
 	TObjectPtr<UBroomAIDataAsset> AIData;
+
+	/** Team assigned to the broom this controller possesses (opponents by default). */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "AI")
+	EGoalTeam Team = EGoalTeam::TeamB;
 
 private:
 

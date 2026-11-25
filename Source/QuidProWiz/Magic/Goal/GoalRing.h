@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "QuidditchTeam.h"
 #include "GoalRing.generated.h"
 
 class UBoxComponent;
@@ -11,13 +12,6 @@ class UStaticMeshComponent;
 class USceneComponent;
 class UGoalRingDataAsset;
 class AQuaffle;
-
-UENUM(BlueprintType)
-enum class EGoalTeam : uint8
-{
-	TeamA UMETA(DisplayName = "Team A"),
-	TeamB UMETA(DisplayName = "Team B")
-};
 
 /**
  * A scoring ring. Scoring is decided on the server only; the result is published through
@@ -39,8 +33,11 @@ public:
 
 	bool IsGoalEnabled() const { return bGoalEnabled; }
 
-	/** Team credited when the Quaffle passes through this ring. */
+	/** Team that defends this ring. */
 	EGoalTeam GetOwningTeam() const { return OwningTeam; }
+
+	/** Team credited when the Quaffle passes through this ring: the attackers. */
+	EGoalTeam GetScoringTeam() const { return GetOpposingTeam(OwningTeam); }
 
 	int32 GetScoreOverride() const { return ScoreOverride; }
 
@@ -76,6 +73,7 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Goal | Data")
 	TObjectPtr<UGoalRingDataAsset> GoalDataAsset = nullptr;
 
+	/** Team that defends this ring; goals through it score for the other team. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Goal | Gameplay")
 	EGoalTeam OwningTeam = EGoalTeam::TeamA;
 

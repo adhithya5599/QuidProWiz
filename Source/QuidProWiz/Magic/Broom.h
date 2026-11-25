@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
+#include "QuidditchTeam.h"
 #include "Broom.generated.h"
 
 class UStaticMeshComponent;
@@ -77,6 +78,10 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Broom|Data")
 	TObjectPtr<UBroomDataAsset> BroomData;
 
+	/** Side this broom plays for. Players default to Team A; AI controllers assign their own. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Replicated, Category = "Broom|Team")
+	EGoalTeam Team = EGoalTeam::TeamA;
+
 public:
 
 	// --- Input assets -------------------------------------------------------------------------
@@ -140,7 +145,13 @@ public:
 		float RespawnDelay);
 	void StartPickupCooldown(float Duration);
 
+	/** Server: assign the broom to a team (replicates). */
+	void SetTeam(EGoalTeam NewTeam);
+
 	// --- Queries ------------------------------------------------------------------------------
+
+	UFUNCTION(BlueprintPure, Category = "Broom|Team")
+	EGoalTeam GetTeam() const { return Team; }
 
 	UFUNCTION(BlueprintCallable, Category = "Broom|Components")
 	USkeletalMeshComponent* GetRiderMesh() const { return RiderMesh; }

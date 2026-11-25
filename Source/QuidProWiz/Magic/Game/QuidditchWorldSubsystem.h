@@ -11,9 +11,11 @@ class AGoalRing;
 class AQuaffle;
 class ABludger;
 class ABroom;
+class ASnitch;
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnQuidditchGoalScored, AGoalRing* /*Goal*/, int32 /*ScoreValue*/);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FOnQuidditchZoneEntered, ABroom* /*Broom*/, EZoneType /*Zone*/);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FOnQuidditchSnitchCaught, ASnitch* /*Snitch*/, ABroom* /*Catcher*/);
 
 /**
  * Per-world registry and event hub for match actors (Service Locator + Observer).
@@ -41,11 +43,17 @@ public:
 	void UnregisterBludger(ABludger* Bludger);
 	void RegisterBroom(ABroom* Broom);
 	void UnregisterBroom(ABroom* Broom);
+	void RegisterSnitch(ASnitch* Snitch);
+	void UnregisterSnitch(ASnitch* Snitch);
 
 	TArray<AGoalRing*> GetGoals() const { return Resolve(Goals); }
 	TArray<AQuaffle*> GetQuaffles() const { return Resolve(Quaffles); }
 	TArray<ABludger*> GetBludgers() const { return Resolve(Bludgers); }
 	TArray<ABroom*> GetBrooms() const { return Resolve(Brooms); }
+	TArray<ASnitch*> GetSnitches() const { return Resolve(Snitches); }
+
+	/** Middle of the pitch: the average position of all goal rings (or zero if there are none). */
+	FVector GetArenaCenter() const;
 
 	/** Nearest Quaffle that is currently free to pick up, or nullptr. */
 	AQuaffle* FindNearestFreeQuaffle(const FVector& Location, float* OutDistance = nullptr) const;
@@ -59,6 +67,9 @@ public:
 	/** Raised on every machine when a broom enters a gym test zone. */
 	FOnQuidditchZoneEntered OnZoneEntered;
 
+	/** Raised on the server when a broom catches the Snitch. */
+	FOnQuidditchSnitchCaught OnSnitchCaught;
+
 protected:
 
 	virtual bool DoesSupportWorldType(const EWorldType::Type WorldType) const override;
@@ -69,6 +80,7 @@ private:
 	TArray<TWeakObjectPtr<AQuaffle>> Quaffles;
 	TArray<TWeakObjectPtr<ABludger>> Bludgers;
 	TArray<TWeakObjectPtr<ABroom>> Brooms;
+	TArray<TWeakObjectPtr<ASnitch>> Snitches;
 
 	template <typename T>
 	static TArray<T*> Resolve(const TArray<TWeakObjectPtr<T>>& Entries)
