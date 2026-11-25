@@ -24,7 +24,7 @@ enum class EQuaffleState : uint8
  * shared instance per state is used (flyweight) and the replicated EQuaffleState selects it.
  * Add a state (Pass, Steal...) by adding an enum value and a class here.
  */
-class FQuaffleStateBase
+class QUIDPROWIZ_API FQuaffleStateBase
 {
 public:
 	virtual ~FQuaffleStateBase() = default;
