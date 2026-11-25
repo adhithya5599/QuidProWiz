@@ -1,24 +1,37 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "Quaffle.h"
-#include "Components/SphereComponent.h"
-#include "Components/StaticMeshComponent.h"
-#include "GameFramework/ProjectileMovementComponent.h"
+#include "DataAsset/QuaffleDataAsset.h"
+#include "QuidditchWorldSubsystem.h"
 #include "Broom.h"
+#include "Components/SphereComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/ProjectileMovementComponent.h"
+#include "NiagaraComponent.h"
+#include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
 
-// Sets default values
+const FQuaffleStateBase& FQuaffleStateBase::Get(EQuaffleState State)
+{
+	static const FQuaffleStateFree Free;
+	static const FQuaffleStatePossessed Possessed;
+	static const FQuaffleStateThrown Thrown;
+
+	switch (State)
+	{
+	case EQuaffleState::Possessed:	return Possessed;
+	case EQuaffleState::Thrown:		return Thrown;
+	case EQuaffleState::Free:
+	default:						return Free;
+	}
+}
+
 AQuaffle::AQuaffle()
 {
- 	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
-	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bCanEverTick = false;
 
-	//Collision presets
 	CollisionComponent->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
-	CollisionComponent->SetSimulatePhysics(false);
 
-	//Projectile movement presets
 	ProjectileMovement = CreateDefaultSubobject<UProjectileMovementComponent>(TEXT("ProjectileMovement"));
 	ProjectileMovement->UpdatedComponent = CollisionComponent;
 	ProjectileMovement->InitialSpeed = 0.f;
@@ -26,182 +39,156 @@ AQuaffle::AQuaffle()
 	ProjectileMovement->bRotationFollowsVelocity = false;
 	ProjectileMovement->bShouldBounce = false;
 	ProjectileMovement->bAutoActivate = false;
-	ProjectileMovement->ProjectileGravityScale = .6f;
-
-	CurrentState = MakeUnique<QuaffleStateFree>();
-	PossessingPlayer = nullptr;
+	ProjectileMovement->ProjectileGravityScale = 0.6f;
 
 	TrailEffect = CreateDefaultSubobject<UNiagaraComponent>(TEXT("TrailEffect"));
 	TrailEffect->SetupAttachment(RootComponent);
 	TrailEffect->SetAutoActivate(false);
 }
 
-// Called when the game starts or when spawned
+void AQuaffle::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(AQuaffle, QuaffleState);
+	DOREPLIFETIME(AQuaffle, PossessingPlayer);
+}
+
 void AQuaffle::BeginPlay()
 {
 	Super::BeginPlay();
 
 	InitialSpawnTransform = GetActorTransform();
-	PreviousLocation = GetActorLocation();
-	CurrentLocationCached = PreviousLocation;
 
-	if (!QuaffleData) return;
+	if (QuaffleData)
+	{
+		ProjectileMovement->MaxSpeed = QuaffleData->ThrowMaxSpeed;
+		ProjectileMovement->ProjectileGravityScale = QuaffleData->ThrowGravityScale;
+
+		if (QuaffleData->ThrowTrailEffect)
+		{
+			TrailEffect->SetAsset(QuaffleData->ThrowTrailEffect);
+		}
+	}
+
+	if (UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
+	{
+		Subsystem->RegisterQuaffle(this);
+	}
+
+	ApplyStateEffects();
 }
 
-// Called every frame
-void AQuaffle::Tick(float DeltaTime)
+void AQuaffle::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	Super::Tick(DeltaTime);
+	if (UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
+	{
+		Subsystem->UnregisterQuaffle(this);
+	}
 
-	PreviousLocation = CurrentLocationCached;
-	CurrentLocationCached = GetActorLocation();
+	GetWorldTimerManager().ClearTimer(MissRespawnTimerHandle);
+	Super::EndPlay(EndPlayReason);
 }
 
-bool AQuaffle::CanBePickedUpBy(AActor* PlayerActor) const
+float AQuaffle::GetPickupRadius() const
 {
-	return IsInPickupRange(PlayerActor) && CurrentState->CanPickUp();
+	return QuaffleData ? QuaffleData->PickupRadius : 200.f;
 }
 
-bool AQuaffle::IsInPickupRange(AActor* PlayerActor) const
+bool AQuaffle::CanBePickedUpBy(const AActor* PlayerActor) const
+{
+	return CanBePickedUp() && IsInPickupRange(PlayerActor);
+}
+
+bool AQuaffle::IsInPickupRange(const AActor* PlayerActor) const
 {
 	if (!IsValid(PlayerActor)) return false;
-	return FVector::Dist(GetActorLocation(), PlayerActor->GetActorLocation()) <= QuaffleData->PickupRadius;
+	return FVector::Dist(GetActorLocation(), PlayerActor->GetActorLocation()) <= GetPickupRadius();
+}
+
+void AQuaffle::SetQuaffleState(EQuaffleState NewState)
+{
+	if (!HasAuthority()) return;
+
+	QuaffleState = NewState;
+	ApplyStateEffects(); // OnRep doesn't fire on the server.
+}
+
+void AQuaffle::OnRep_QuaffleState()
+{
+	ApplyStateEffects();
+}
+
+void AQuaffle::ApplyStateEffects()
+{
+	const bool bPossessed = QuaffleState == EQuaffleState::Possessed;
+	CollisionComponent->SetCollisionEnabled(bPossessed ? ECollisionEnabled::NoCollision
+		: ECollisionEnabled::QueryAndPhysics);
+
+	if (!TrailEffect) return;
+
+	if (QuaffleState == EQuaffleState::Thrown && TrailEffect->GetAsset())
+	{
+		TrailEffect->Activate(true);
+	}
+	else
+	{
+		TrailEffect->Deactivate();
+	}
 }
 
 void AQuaffle::PickUp(AActor* PlayerActor)
 {
-	if (!CanBePickedUpBy(PlayerActor)) return;
+	if (!HasAuthority() || !CanBePickedUpBy(PlayerActor)) return;
+
+	StopProjectile();
+	CollisionComponent->ClearMoveIgnoreActors();
 
 	PossessingPlayer = PlayerActor;
-	SetState(MakeUnique<QuaffleStatePossessed>());
+	SetQuaffleState(EQuaffleState::Possessed);
 
-	if (ProjectileMovement)
+	const ABroom* Broom = Cast<ABroom>(PlayerActor);
+	USkeletalMeshComponent* RiderMesh = Broom ? Broom->GetRiderMesh() : nullptr;
+	if (!RiderMesh) return;
+
+	const FAttachmentTransformRules AttachmentRules(EAttachmentRule::SnapToTarget, true);
+	AttachToComponent(RiderMesh, AttachmentRules, QuaffleData ? QuaffleData->SocketName : NAME_None);
+
+	if (QuaffleData)
 	{
-		ProjectileMovement->SetUpdatedComponent(CollisionComponent);
-		ProjectileMovement->StopMovementImmediately();
-		ProjectileMovement->Deactivate();
-	}
-
-	CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-
-	ABroom* Broom = Cast<ABroom>(PlayerActor);
-	if (!Broom) return;
-
-	USkeletalMeshComponent* RiderMesh = Broom->GetRiderMesh();
-
-	if (RiderMesh)
-	{
-		FAttachmentTransformRules AttachmentRules(EAttachmentRule::SnapToTarget, true);
-		AttachToComponent(RiderMesh, AttachmentRules, QuaffleData->SocketName);
 		SetActorRelativeLocation(QuaffleData->HeldOffset);
 		SetActorRelativeRotation(QuaffleData->HeldRotationOffset);
 	}
 }
 
-void AQuaffle::NotifyScored()
-{
-	if (!CurrentState->CanScore()) return;
-
-	GetWorldTimerManager().ClearTimer(MissRespawnTimerHandle);
-
-	if (ProjectileMovement)
-	{
-		ProjectileMovement->StopMovementImmediately();
-		ProjectileMovement->Deactivate();
-	}
-
-	CollisionComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
-
-	SetState(MakeUnique<QuaffleStateScored>());
-	DeactivateTrail();
-
-	SetActorTransform(InitialSpawnTransform);
-	PossessingPlayer = nullptr;
-	LastThrower = nullptr;	
-
-	TimeSinceLastPositionBroadcast = 0.f;
-
-	SetState(MakeUnique<QuaffleStateFree>());
-
-	CollisionComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-}
-
 void AQuaffle::Drop(AActor* DropActor)
 {
-	if (!CurrentState->CanThrow()) return;
+	if (!HasAuthority() || !CanBeThrown()) return;
 
 	DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	StopProjectile();
 
 	PossessingPlayer = nullptr;
-	SetState(MakeUnique<QuaffleStateFree>());
+	SetQuaffleState(EQuaffleState::Free);
 
-	CollisionComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	if (DropActor)
 	{
 		CollisionComponent->IgnoreActorWhenMoving(DropActor, false);
 	}
-
-	if (ProjectileMovement)
-	{
-		ProjectileMovement->StopMovementImmediately();
-		ProjectileMovement->Deactivate();
-	}
 }
 
-bool AQuaffle::LaunchWithVelocity(const FVector& LaunchVelocity, AActor* PreviousHolder)
+FVector AQuaffle::ComputeThrowStartLocation(const AActor* Holder) const
 {
-	if (!CurrentState->CanThrow() || !IsValid(PossessingPlayer)) return false;
+	const float ForwardOffset = QuaffleData ? QuaffleData->ThrowStartForwardOffset : 150.f;
+	const float VerticalOffset = QuaffleData ? QuaffleData->ThrowStartVerticalOffset : 30.f;
 
-	DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
-
-	const FVector ThrowStartLocation = PreviousHolder->GetActorLocation() +
-		PreviousHolder->GetActorForwardVector() * 150.f +
-		FVector(0.f, 0.f, 3.f);
-
-	LastThrownStartLocation = ThrowStartLocation;
-
-	SetActorLocation(ThrowStartLocation);
-
-	PossessingPlayer = nullptr;
-	LastThrower = PreviousHolder;
-	SetState(MakeUnique<QuaffleStateThrown>());
-	ActivateTrail();
-
-	CollisionComponent->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
-	CollisionComponent->SetSimulatePhysics(false);
-	CollisionComponent->IgnoreActorWhenMoving(PreviousHolder, true);
-
-	if (ProjectileMovement)
-	{
-		ProjectileMovement->SetUpdatedComponent(CollisionComponent);
-		ProjectileMovement->StopMovementImmediately();
-		ProjectileMovement->Deactivate();
-
-		ProjectileMovement->Velocity = LaunchVelocity;
-		ProjectileMovement->UpdateComponentVelocity();
-		ProjectileMovement->Activate(true);
-		
-		TimeSinceLastPositionBroadcast = 0.f;
-
-		GetWorldTimerManager().ClearTimer(MissRespawnTimerHandle);
-		GetWorldTimerManager().SetTimer(MissRespawnTimerHandle, this, &AQuaffle::OnMissRespawn,
-			MissRespawnDelay,false);
-	}
-
-	return true;
-}
-
-FVector AQuaffle::ComputeThrowStartLocation(AActor* Holder) const
-{
-	return Holder->GetActorLocation() +
-		Holder->GetActorForwardVector() * QuaffleData->ThrowStartForwardOffset +
-		FVector(0.f, 0.f, QuaffleData->ThrowStartVerticalOffset);
+	return Holder->GetActorLocation() + Holder->GetActorForwardVector() * ForwardOffset +
+		FVector(0.f, 0.f, VerticalOffset);
 }
 
 bool AQuaffle::ThrowToTarget(const FVector& TargetLocation, float ArcBias)
 {
-	if (!CurrentState->CanThrow() || !IsValid(PossessingPlayer)) return false;
+	if (!HasAuthority() || !CanBeThrown() || !IsValid(PossessingPlayer)) return false;
 
 	AActor* PreviousHolder = PossessingPlayer;
 	const FVector ThrowStartLocation = ComputeThrowStartLocation(PreviousHolder);
@@ -215,35 +202,79 @@ bool AQuaffle::ThrowToTarget(const FVector& TargetLocation, float ArcBias)
 	const float Gravity = FMath::Abs(GetWorld()->GetGravityZ()) * ProjectileMovement->ProjectileGravityScale;
 	if (Gravity <= KINDA_SMALL_NUMBER) return false;
 
-	float TravelTime = DistanceXY / ProjectileMovement->MaxSpeed;
-	TravelTime = FMath::Clamp(TravelTime * ArcBias, QuaffleData->MinThrowArcTime, QuaffleData->MaxThrowArcTime);
+	const float MinArcTime = QuaffleData ? QuaffleData->MinThrowArcTime : 0.18f;
+	const float MaxArcTime = QuaffleData ? QuaffleData->MaxThrowArcTime : 0.65f;
+	const float TravelTime = FMath::Clamp(DistanceXY / ProjectileMovement->MaxSpeed * ArcBias, MinArcTime, MaxArcTime);
 
+	// Solve the arc from the same point the ball is launched from (these used to differ).
 	const FVector VelocityXY = DeltaXY / TravelTime;
 	const float VelocityZ = (Delta.Z / TravelTime) + (0.5f * Gravity * TravelTime);
 	const FVector LaunchVelocity = VelocityXY + FVector::UpVector * VelocityZ;
 
-	return LaunchWithVelocity(LaunchVelocity, PreviousHolder);
+	return LaunchWithVelocity(LaunchVelocity, PreviousHolder, ThrowStartLocation);
+}
+
+bool AQuaffle::LaunchWithVelocity(const FVector& LaunchVelocity, AActor* PreviousHolder, const FVector& StartLocation)
+{
+	DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+
+	LastThrownStartLocation = StartLocation;
+	SetActorLocation(StartLocation);
+
+	PossessingPlayer = nullptr;
+	LastThrower = PreviousHolder;
+	SetQuaffleState(EQuaffleState::Thrown);
+
+	CollisionComponent->SetSimulatePhysics(false);
+	CollisionComponent->IgnoreActorWhenMoving(PreviousHolder, true);
+
+	ProjectileMovement->SetUpdatedComponent(CollisionComponent);
+	ProjectileMovement->StopMovementImmediately();
+	ProjectileMovement->Velocity = LaunchVelocity;
+	ProjectileMovement->UpdateComponentVelocity();
+	ProjectileMovement->Activate(true);
+
+	const float MissDelay = QuaffleData ? QuaffleData->MissRespawnDelay : 3.f;
+	GetWorldTimerManager().ClearTimer(MissRespawnTimerHandle);
+	GetWorldTimerManager().SetTimer(MissRespawnTimerHandle, this, &AQuaffle::OnMissRespawn, MissDelay, false);
+
+	return true;
+}
+
+void AQuaffle::StopProjectile()
+{
+	if (!ProjectileMovement) return;
+
+	ProjectileMovement->StopMovementImmediately();
+	ProjectileMovement->Deactivate();
+}
+
+void AQuaffle::NotifyScored()
+{
+	if (!HasAuthority() || !CanScore()) return;
+
+	ResetToSpawn();
 }
 
 void AQuaffle::OnMissRespawn()
 {
-	if (!HasAuthority()) return;
+	// Only reset if still in flight; a goal resets it immediately instead.
+	if (!HasAuthority() || !CanScore()) return;
 
-	// Only respawn if still in thrown state — if scored this won't fire
-	if (!CurrentState->CanScore()) return;
-
-	NotifyScored();
+	ResetToSpawn();
 }
 
-void AQuaffle::ActivateTrail()
+void AQuaffle::ResetToSpawn()
 {
-	if (!TrailEffect || !ThrowTrailSystem) return;
-	TrailEffect->SetAsset(ThrowTrailSystem);
-	TrailEffect->Activate(true);
-}
+	GetWorldTimerManager().ClearTimer(MissRespawnTimerHandle);
 
-void AQuaffle::DeactivateTrail()
-{
-	if (!TrailEffect) return;
-	TrailEffect->Deactivate();
+	StopProjectile();
+	DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+	CollisionComponent->ClearMoveIgnoreActors();
+
+	SetActorTransform(InitialSpawnTransform);
+	PossessingPlayer = nullptr;
+	LastThrower = nullptr;
+
+	SetQuaffleState(EQuaffleState::Free);
 }

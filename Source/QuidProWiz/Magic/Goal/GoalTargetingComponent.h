@@ -25,7 +25,7 @@ public:
 protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Targeting")
-	UGoalTargetingDataAsset* TargetingDataAsset = nullptr;
+	TObjectPtr<UGoalTargetingDataAsset> TargetingDataAsset = nullptr;
 
 	virtual bool IsGoalValidTarget(const AGoalRing* Goal, const FVector& CameraLocation,
 		const FVector& CameraForward) const;
@@ -38,7 +38,7 @@ private:
 	float TimeUntilRetarget = 0.f;
 
 	UPROPERTY()
-	AGoalRing* CurrentTargetGoal = nullptr;
+	TObjectPtr<AGoalRing> CurrentTargetGoal = nullptr;
 
 	AGoalRing* FindBestGoalTarget() const;
 	void SetCurrentTargetGoal(AGoalRing* NewGoal);

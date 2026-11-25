@@ -1,6 +1,5 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "BTTask_FlyToQuaffle.h"
 #include "AIBroomController.h"
 #include "BehaviorTree/BlackboardComponent.h"
@@ -21,38 +20,27 @@ EBTNodeResult::Type UBTTask_FlyToQuaffle::ExecuteTask(UBehaviorTreeComponent& Ow
 void UBTTask_FlyToQuaffle::TickTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, float DeltaSeconds)
 {
 	AAIBroomController* Controller = Cast<AAIBroomController>(OwnerComp.GetAIOwner());
-	if (!Controller)
+	const UBlackboardComponent* BB = OwnerComp.GetBlackboardComponent();
+	ABroom* Broom = Controller ? Controller->GetControlledBroom() : nullptr;
+
+	// Each failure path returns: the old version kept running and dereferenced null pointers.
+	if (!Controller || !BB || !Broom || !Controller->GetAIData() ||
+		!BB->GetValueAsBool(AAIBroomController::BBKey_IsQuaffleFree))
 	{
 		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
+		return;
 	}
 
-	UBlackboardComponent* BB = OwnerComp.GetBlackboardComponent();
-	if (!BB)
-	{
-		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
-	}
-
-	if (!BB->GetValueAsBool(TEXT("IsQuaffleFree")))
-	{
-		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
-	}
-
-	const FVector QuaffleLocation = BB->GetValueAsVector(TEXT("QuaffleLocation"));
+	const FVector QuaffleLocation = BB->GetValueAsVector(AAIBroomController::BBKey_QuaffleLocation);
 	Controller->FlyToLocation(QuaffleLocation, DeltaSeconds);
 
-	ABroom* Broom = Controller->GetControlledBroom();
-	if (Broom)
+	if (FVector::Dist(Broom->GetActorLocation(), QuaffleLocation) <= Controller->GetAIData()->PickupApproachRadius)
 	{
-		const float Distance = FVector::Dist(Broom->GetActorLocation(), QuaffleLocation);
-		if (Distance <= Controller->GetAIData()->PickupApproachRadius)
-		{
-			Controller->AttemptPickup();
+		Controller->AttemptPickup();
 
-			if (Broom->IsHoldingQuaffle())
-			{
-				FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
-				return;
-			}
+		if (Broom->IsHoldingQuaffle())
+		{
+			FinishLatentTask(OwnerComp, EBTNodeResult::Succeeded);
 		}
 	}
 }

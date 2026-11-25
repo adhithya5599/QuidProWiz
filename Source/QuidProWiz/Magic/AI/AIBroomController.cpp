@@ -1,16 +1,14 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "AIBroomController.h"
 #include "DataAsset/BroomAIDataAsset.h"
+#include "QuidditchWorldSubsystem.h"
 #include "Broom.h"
 #include "Quaffle.h"
 #include "Bludger.h"
 #include "GoalRing.h"
 #include "BehaviorTree/BehaviorTree.h"
 #include "BehaviorTree/BlackboardComponent.h"
-#include "Kismet/GameplayStatics.h"
-#include "GameFramework/FloatingPawnMovement.h"
 
 const FName AAIBroomController::BBKey_QuaffleLocation = TEXT("QuaffleLocation");
 const FName AAIBroomController::BBKey_GoalLocation = TEXT("GoalLocation");
@@ -20,26 +18,39 @@ const FName AAIBroomController::BBKey_IsQuaffleFree = TEXT("IsQuaffleFree");
 const FName AAIBroomController::BBKey_IsBludgerClose = TEXT("IsBludgerClose");
 const FName AAIBroomController::BBKey_TargetGoal = TEXT("TargetGoal");
 
+namespace BroomAIConstants
+{
+	constexpr float ArrivalRadius = 50.f;
+	constexpr float SlowDownRadius = 400.f;
+	constexpr float MinApproachSpeedFactor = 0.3f;
+	constexpr float SteeringGain = 2.f;
+	constexpr float CorrectSideBonus = 50.f;
+	constexpr float DistancePenaltyPerUnit = 0.01f;
+}
+
 AAIBroomController::AAIBroomController()
 {
 	PrimaryActorTick.bCanEverTick = true;
-}
-
-void AAIBroomController::BeginPlay()
-{
-	Super::BeginPlay();
-	FindGameActors();
 }
 
 void AAIBroomController::OnPossess(APawn* InPawn)
 {
 	Super::OnPossess(InPawn);
 
-	if (!AIData) return;
+	if (AIData && BehaviorTree)
+	{
+		RunBehaviorTree(BehaviorTree);
+	}
+}
 
-	if (!BehaviorTree) return;
+void AAIBroomController::OnUnPossess()
+{
+	if (ABroom* Broom = GetControlledBroom())
+	{
+		Broom->SetSpeedOverride(0.f);
+	}
 
-	RunBehaviorTree(BehaviorTree);
+	Super::OnUnPossess();
 }
 
 void AAIBroomController::Tick(float DeltaTime)
@@ -56,97 +67,78 @@ void AAIBroomController::Tick(float DeltaTime)
 	}
 }
 
-void AAIBroomController::FindGameActors()
+ABroom* AAIBroomController::GetControlledBroom() const
 {
-	AActor* FoundQuaffle = UGameplayStatics::GetActorOfClass(GetWorld(), AQuaffle::StaticClass());
-	QuaffleRef = Cast<AQuaffle>(FoundQuaffle);
+	return Cast<ABroom>(GetPawn());
+}
 
-	AActor* FoundBludger = UGameplayStatics::GetActorOfClass(GetWorld(), ABludger::StaticClass());
-	BludgerRef = Cast<ABludger>(FoundBludger);
+ABludger* AAIBroomController::FindNearestBludger(float* OutDistance) const
+{
+	const ABroom* Broom = GetControlledBroom();
+	const UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this);
+	return Broom && Subsystem ? Subsystem->FindNearestBludger(Broom->GetActorLocation(), OutDistance) : nullptr;
 }
 
 void AAIBroomController::UpdateBlackboard()
 {
-	if (!Blackboard) return;
-
+	UBlackboardComponent* BB = GetBlackboardComponent();
 	ABroom* Broom = GetControlledBroom();
-	if (!Broom) return;
+	const UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this);
+	if (!BB || !Broom || !Subsystem) return;
 
-	TArray<AActor*> FoundActors;
-	UGameplayStatics::GetAllActorsOfClass(GetWorld(), AQuaffle::StaticClass(), FoundActors);
-
-	AQuaffle* NearestFreeQuaffle = nullptr;
-	float NearestDistance = TNumericLimits<float>::Max();
-
-	for (AActor* Actor : FoundActors)
+	if (const AQuaffle* FreeQuaffle = Subsystem->FindNearestFreeQuaffle(Broom->GetActorLocation()))
 	{
-		AQuaffle* Quaffle = Cast<AQuaffle>(Actor);
-		if (!Quaffle || !Quaffle->CanBePickedUp()) continue;
-
-		const float Distance = FVector::Dist(Broom->GetActorLocation(), Quaffle->GetActorLocation());
-		
-		if (Distance < NearestDistance)
-		{
-			NearestDistance = Distance;
-			NearestFreeQuaffle = Quaffle;
-		}
-	}
-
-	if (NearestFreeQuaffle)
-	{
-		Blackboard->SetValueAsVector(BBKey_QuaffleLocation, NearestFreeQuaffle->GetActorLocation());
-		Blackboard->SetValueAsBool(BBKey_IsQuaffleFree, NearestFreeQuaffle->CanBePickedUp());
+		BB->SetValueAsVector(BBKey_QuaffleLocation, FreeQuaffle->GetActorLocation());
+		BB->SetValueAsBool(BBKey_IsQuaffleFree, true);
 	}
 	else
 	{
-		Blackboard->SetValueAsBool(BBKey_IsQuaffleFree, false);
+		BB->SetValueAsBool(BBKey_IsQuaffleFree, false);
 	}
 
-	if (BludgerRef)
+	float BludgerDistance = 0.f;
+	if (const ABludger* Bludger = FindNearestBludger(&BludgerDistance))
 	{
-		const FVector BludgerLocation = BludgerRef->GetActorLocation();
-		Blackboard->SetValueAsVector(BBKey_BludgerLocation, BludgerLocation);
-		
-		const float BludgerDistance = FVector::Dist(Broom->GetActorLocation(), BludgerLocation);
-		Blackboard->SetValueAsBool(BBKey_IsBludgerClose, BludgerDistance <= AIData->BludgerEvadeDistance);
+		BB->SetValueAsVector(BBKey_BludgerLocation, Bludger->GetActorLocation());
+		BB->SetValueAsBool(BBKey_IsBludgerClose, BludgerDistance <= AIData->BludgerEvadeDistance);
+	}
+	else
+	{
+		BB->SetValueAsBool(BBKey_IsBludgerClose, false);
 	}
 
-	Blackboard->SetValueAsBool(BBKey_IsHoldingQuaffle, Broom->IsHoldingQuaffle());
+	BB->SetValueAsBool(BBKey_IsHoldingQuaffle, Broom->IsHoldingQuaffle());
 
-	AGoalRing* BestGoal = FindBestGoal();
-	if (BestGoal)
+	if (AGoalRing* BestGoal = FindBestGoal())
 	{
-		Blackboard->SetValueAsVector(BBKey_GoalLocation, BestGoal->GetAimDirection());
-		Blackboard->SetValueAsObject(BBKey_TargetGoal, BestGoal);
+		BB->SetValueAsVector(BBKey_GoalLocation, BestGoal->GetAimDirection());
+		BB->SetValueAsObject(BBKey_TargetGoal, BestGoal);
 	}
 }
 
 AGoalRing* AAIBroomController::FindBestGoal() const
 {
-	if (!AIData) return nullptr;
+	const ABroom* Broom = GetControlledBroom();
+	const UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this);
+	if (!AIData || !Broom || !Subsystem) return nullptr;
 
 	AGoalRing* BestGoal = nullptr;
-	float BestScore = -1.f;
+	float BestScore = -TNumericLimits<float>::Max();
+	const FVector BroomLocation = Broom->GetActorLocation();
 
-	ABroom* Broom = GetControlledBroom();
-	if (!Broom) return nullptr;
-
-	for (const TWeakObjectPtr<AGoalRing>& GoalPtr : AGoalRing::GetRegisteredGoals())
+	for (AGoalRing* Goal : Subsystem->GetGoals())
 	{
-		AGoalRing* Goal = GoalPtr.Get();
-		if (!Goal || !Goal->IsGoalEnabled()) continue;
+		if (!Goal->IsGoalEnabled()) continue;
 
+		// TODO(teams): opponents currently always attack Team A rings; derive from team assignment.
 		if (Goal->GetOwningTeam() != EGoalTeam::TeamA) continue;
 
-		const FVector BroomLocation = Broom->GetActorLocation();
 		const float Distance = FVector::Dist(BroomLocation, Goal->GetActorLocation());
-
-		const float GoalValue = Goal->GetScoreOverride() > 0 ? Goal->GetScoreOverride() : 10.f;
-
 		const float SideDot = FVector::DotProduct(BroomLocation - Goal->GetActorLocation(), Goal->GetActorForwardVector());
-		const float SideBonus = SideDot < 0.f ? 50.f : 0.f;
+		const float SideBonus = SideDot < 0.f ? BroomAIConstants::CorrectSideBonus : 0.f;
 
-		const float Score = (GoalValue * AIData->HighValueGoalBias) + SideBonus - (Distance * 0.01f);
+		const float Score = Goal->GetScoreValue() * AIData->HighValueGoalBias + SideBonus
+			- Distance * BroomAIConstants::DistancePenaltyPerUnit;
 
 		if (Score > BestScore)
 		{
@@ -158,82 +150,59 @@ AGoalRing* AAIBroomController::FindBestGoal() const
 	return BestGoal;
 }
 
-ABroom* AAIBroomController::GetControlledBroom() const
-{
-	return Cast<ABroom>(GetPawn());
-}
-
 void AAIBroomController::FlyToLocation(const FVector& TargetLocation, float DeltaTime)
 {
 	ABroom* Broom = GetControlledBroom();
 	if (!Broom || !AIData) return;
 
-	const FVector CurrentLocation = Broom->GetActorLocation();
-	const FVector ToTarget = TargetLocation - CurrentLocation;
+	const FVector ToTarget = TargetLocation - Broom->GetActorLocation();
 	const float Distance = ToTarget.Size();
-
-	if (Distance < 50.f) return;
+	if (Distance < BroomAIConstants::ArrivalRadius) return;
 
 	const FVector Direction = ToTarget.GetSafeNormal();
-	const FVector Forward = Broom->GetActorForwardVector();
-	const FVector Right = Broom->GetActorRightVector();
-
-	const float ForwardDot = FVector::DotProduct(Forward, Direction);
-	const float RightDot = FVector::DotProduct(Right, Direction);
+	const float RightDot = FVector::DotProduct(Broom->GetActorRightVector(), Direction);
 	const float UpDot = FVector::DotProduct(FVector::UpVector, Direction);
 
-	const float SlowDownRadius = 400.f;
-	const float SpeedFactor = Distance < SlowDownRadius ? FMath::Clamp(Distance / SlowDownRadius, 0.3f, 1.f) : 1.f;
+	const float SpeedFactor = Distance < BroomAIConstants::SlowDownRadius
+		? FMath::Clamp(Distance / BroomAIConstants::SlowDownRadius, BroomAIConstants::MinApproachSpeedFactor, 1.f)
+		: 1.f;
 
-	Broom->GetBroomMovementComponent()->MaxSpeed = AIData->FlySpeed * SpeedFactor;
-
+	Broom->SetSpeedOverride(AIData->FlySpeed * SpeedFactor);
 	Broom->PerformMove(1.f);
-	Broom->PerformTurn(FMath::Clamp(RightDot * 2.f, -1.f, 1.f));
-	Broom->PerformAscend(FMath::Clamp(UpDot * 2.f, -1.f, 1.f));
+	Broom->PerformTurn(FMath::Clamp(RightDot * BroomAIConstants::SteeringGain, -1.f, 1.f));
+	Broom->PerformAscend(FMath::Clamp(UpDot * BroomAIConstants::SteeringGain, -1.f, 1.f));
 }
 
 void AAIBroomController::AttemptPickup()
 {
-	ABroom* Broom = GetControlledBroom();
-	if (!Broom) return;
-
-	Broom->PerformPickupQuaffle();
+	if (ABroom* Broom = GetControlledBroom())
+	{
+		Broom->PerformPickupQuaffle();
+	}
 }
 
 void AAIBroomController::AttemptThrow()
 {
 	ABroom* Broom = GetControlledBroom();
-	if (!Broom || !AIData) return;
+	const UBlackboardComponent* BB = GetBlackboardComponent();
+	if (!Broom || !AIData || !BB) return;
 
+	AGoalRing* TargetGoal = Cast<AGoalRing>(BB->GetValueAsObject(BBKey_TargetGoal));
+	if (!TargetGoal) return;
+
+	// Lower accuracy widens the random spread of the arc's flight time.
 	const float AccuracyError = 1.f - AIData->ThrowAccuracy;
 	const float ArcBias = FMath::RandRange(1.f - AccuracyError, 1.f + AccuracyError);
 
-	UBlackboardComponent* BB = GetBlackboardComponent();
-	if (!BB) return;
-
-	AGoalRing* TargetGoal = Cast<AGoalRing>(BB->GetValueAsObject(TEXT("TargetGoal")));
-	if (!TargetGoal) return;
-
-	const FVector AimLocation = TargetGoal->GetAimDirection();
-
-	AQuaffle* HeldQuaffle = Broom->GetHeldQuaffle();
-	if (!HeldQuaffle) return;
-
-	if (HeldQuaffle->ThrowToTarget(AimLocation, ArcBias))
-	{
-		Broom->NotifyQuaffleReleased();
-	}
-
-	Broom->PerformThrowQuaffle();
+	Broom->ThrowQuaffleAtGoal(TargetGoal, ArcBias);
 }
 
 void AAIBroomController::EvadeBludger(float DeltaTime)
 {
 	ABroom* Broom = GetControlledBroom();
-	if (!Broom || !BludgerRef || !AIData) return;
+	const ABludger* Bludger = FindNearestBludger();
+	if (!Broom || !Bludger || !AIData) return;
 
-	const FVector AwayFromBludger = (Broom->GetActorLocation() - BludgerRef->GetActorLocation()).GetSafeNormal();
-	const FVector EvadeTarget = Broom->GetActorLocation() + AwayFromBludger * AIData->BludgerEvadeStrength;
-
-	FlyToLocation(EvadeTarget, DeltaTime);
+	const FVector AwayFromBludger = (Broom->GetActorLocation() - Bludger->GetActorLocation()).GetSafeNormal();
+	FlyToLocation(Broom->GetActorLocation() + AwayFromBludger * AIData->BludgerEvadeStrength, DeltaTime);
 }

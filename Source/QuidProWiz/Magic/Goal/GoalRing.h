@@ -4,15 +4,13 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "DataAsset/GoalRingDataAsset.h"
 #include "GoalRing.generated.h"
-
-DECLARE_MULTICAST_DELEGATE_TwoParams(FOnGoalScored, AGoalRing*, int32);
 
 class UBoxComponent;
 class UStaticMeshComponent;
-class AQuaffle;
 class USceneComponent;
+class UGoalRingDataAsset;
+class AQuaffle;
 
 UENUM(BlueprintType)
 enum class EGoalTeam : uint8
@@ -21,105 +19,88 @@ enum class EGoalTeam : uint8
 	TeamB UMETA(DisplayName = "Team B")
 };
 
+/**
+ * A scoring ring. Scoring is decided on the server only; the result is published through
+ * UQuidditchWorldSubsystem::OnGoalScored and the feedback is multicast to every client.
+ */
 UCLASS()
 class QUIDPROWIZ_API AGoalRing : public AActor
 {
 	GENERATED_BODY()
-	
-public:	
-	// Sets default values for this actor's properties
+
+public:
+
 	AGoalRing();
 
-	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 
+	/** World-space point throws should aim at (just in front of the ring). */
 	FVector GetAimDirection() const;
+
 	bool IsGoalEnabled() const { return bGoalEnabled; }
 
-	void SetLocallyHighlighted(bool bHighlighted);
-
-	static const TArray<TWeakObjectPtr<AGoalRing>>& GetRegisteredGoals()
-	{
-		PurgeStaleGoals();
-		return RegisteredGoals;
-	}
-
-	static FOnGoalScored OnGoalScored;
-
-	static void PurgeStaleGoals();
-
+	/** Team credited when the Quaffle passes through this ring. */
 	EGoalTeam GetOwningTeam() const { return OwningTeam; }
 
 	int32 GetScoreOverride() const { return ScoreOverride; }
 
+	/** Points this ring is worth: the per-instance override, else the data asset value. */
+	int32 GetScoreValue() const;
+
+	/** Local-only cosmetic highlight used by aim assist. */
+	void SetLocallyHighlighted(bool bHighlighted);
+
 protected:
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Goal | Components")
-	USceneComponent* Root;
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Goal | Components")
-	UStaticMeshComponent* RingMesh;
+	TObjectPtr<USceneComponent> Root;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Goal | Components")
-	UBoxComponent* LockOnVolume;
+	TObjectPtr<UStaticMeshComponent> RingMesh;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Goal | Components")
-	UBoxComponent* ScoreVolume;
+	TObjectPtr<UBoxComponent> LockOnVolume;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Goal | Components")
-	USceneComponent* AimDirectionComponent;
+	TObjectPtr<UBoxComponent> ScoreVolume;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Goal | Components")
+	TObjectPtr<USceneComponent> AimDirectionComponent;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Goal | Gameplay")
 	bool bGoalEnabled = true;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Goal | Data")
-	UGoalRingDataAsset* GoalDataAsset = nullptr;
+	TObjectPtr<UGoalRingDataAsset> GoalDataAsset = nullptr;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Goal | Gameplay")
 	EGoalTeam OwningTeam = EGoalTeam::TeamA;
 
+	/** When > 0, replaces the data asset's ScoreValue for this ring (e.g. bonus rings in the gym). */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Goal | Gameplay")
 	int32 ScoreOverride = 0;
 
-protected:
-	// Called when the game starts or when spawned
-	virtual void BeginPlay() override;
-
 	UFUNCTION()
-	void OnScoreVolumeBeginOverlap(UPrimitiveComponent* OverlappedComponent, 
-		AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, 
+	void OnScoreVolumeBeginOverlap(UPrimitiveComponent* OverlappedComponent,
+		AActor* OtherActor, UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep,
 		const FHitResult& SweepResult);
 
-	bool IsValidGoalScore(AQuaffle* Quaffle) const;
+	bool IsValidGoalScore(const AQuaffle* Quaffle) const;
 	void RegisterScore(AQuaffle* Quaffle);
-
-	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 private:
 
-	bool bLocallyHighlighted = false;
-
-	static TArray<TWeakObjectPtr<AGoalRing>> RegisteredGoals;
-
-	float PulseTimer = 0.f;
-	bool bIsPulsing = false;
-
-	UPROPERTY(EditAnywhere, Category = "Goal | Highlight")
-	float PulseSpeed = 3.f;
-
-	UPROPERTY(EditAnywhere, Category = "Goal | Highlight")
-	float PulseIntensity = 0.3f;
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastPlayScoreFeedback();
 
 	void UpdatePulse(float DeltaTime);
-
-	void TriggerScoreFlash();
 	void ResetAfterScoreFlash();
+	void ApplyIdleMaterial();
 
+	bool bLocallyHighlighted = false;
+	float PulseTimer = 0.f;
 	FTimerHandle ScoreFlashTimerHandle;
-
-	UPROPERTY(EditAnywhere, Category = "Goal | Highlight")
-	float ScoreFlashDuration = 0.5f;
-
-	UPROPERTY(EditAnywhere, Category = "Goal | Highlight")
-	UMaterialInterface* ScoreFlashMaterial = nullptr;
 };

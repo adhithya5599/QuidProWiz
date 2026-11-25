@@ -7,6 +7,8 @@
 #include "DataAsset/SoundDataAsset.h"
 #include "SoundManager.generated.h"
 
+class UAudioComponent;
+
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
 class QUIDPROWIZ_API USoundManager : public UActorComponent
@@ -18,6 +20,7 @@ public:
 	USoundManager();
 
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	UFUNCTION(BlueprintCallable, Category = "Sound")
 	void PlayBroomHitByBludger();
@@ -50,12 +53,12 @@ public:
 	void StopBroomFlyingLoop();
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sound")
-	USoundDataAsset* SoundData;
+	TObjectPtr<USoundDataAsset> SoundData;
 
 private:
 
 	UPROPERTY()
-	UAudioComponent* FlyingLoopComponent = nullptr;
+	TObjectPtr<UAudioComponent> FlyingLoopComponent = nullptr;
 
 	void PlaySoundAtLocation(USoundBase* Sound);
 	void PlaySound2D(USoundBase* Sound);

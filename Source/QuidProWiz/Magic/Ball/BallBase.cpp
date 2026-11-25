@@ -1,15 +1,17 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "BallBase.h"
 #include "Components/SphereComponent.h"
 #include "Components/StaticMeshComponent.h"
 
-// Sets default values
 ABallBase::ABallBase()
 {
- 	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
+
+	// Balls are simulated on the server and replicated to clients.
+	bReplicates = true;
+	SetReplicatingMovement(true);
+	SetNetUpdateFrequency(60.f);
 
 	CollisionComponent = CreateDefaultSubobject<USphereComponent>(TEXT("CollisionComponent"));
 	RootComponent = CollisionComponent;
@@ -25,4 +27,3 @@ ABallBase::ABallBase()
 	BallMesh->SetupAttachment(RootComponent);
 	BallMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
-

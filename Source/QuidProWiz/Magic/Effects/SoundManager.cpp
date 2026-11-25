@@ -26,7 +26,17 @@ void USoundManager::BeginPlay()
 	if (!SoundData) return;
 
 	StartBroomFlyingLoop();
-	
+}
+
+void USoundManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (FlyingLoopComponent)
+	{
+		FlyingLoopComponent->Stop();
+		FlyingLoopComponent = nullptr;
+	}
+
+	Super::EndPlay(EndPlayReason);
 }
 
 void USoundManager::PlaySoundAtLocation(USoundBase* Sound)
@@ -44,19 +54,19 @@ void USoundManager::PlaySound2D(USoundBase* Sound)
 void USoundManager::PlayBroomHitByBludger()
 {
 	if (!SoundData) return;
-	PlaySoundAtLocation(SoundData->QuafflePickup);
+	PlaySoundAtLocation(SoundData->BroomHitByBludger);
 }
 
 void USoundManager::PlayQuafflePickup()
 {
 	if (!SoundData) return;
-	PlaySoundAtLocation(SoundData->QuaffleThrow);
+	PlaySoundAtLocation(SoundData->QuafflePickup);
 }
 
 void USoundManager::PlayQuaffleThrow()
 {
 	if (!SoundData) return;
-	PlaySoundAtLocation(SoundData->GoalScored);
+	PlaySoundAtLocation(SoundData->QuaffleThrow);
 }
 
 void USoundManager::PlayGoalScored()

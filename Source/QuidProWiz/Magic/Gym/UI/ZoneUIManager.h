@@ -7,6 +7,8 @@
 #include "../ZoneType.h"
 #include "ZoneUIManager.generated.h"
 
+class ABroom;
+
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOnZoneChanged, EZoneType, NewZone);
 
 UCLASS( ClassGroup=(Custom), meta=(BlueprintSpawnableComponent) )
@@ -19,6 +21,7 @@ public:
 	UZoneUIManager();
 
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	UPROPERTY(BlueprintAssignable, Category = "Zone")
 	FOnZoneChanged OnZoneChanged;
@@ -29,5 +32,7 @@ public:
 private:
 
 	EZoneType CurrentZone = EZoneType::None;
-	void HandleZoneEntered(EZoneType NewZone);
+	FDelegateHandle ZoneEnteredHandle;
+
+	void HandleZoneEntered(ABroom* Broom, EZoneType NewZone);
 };

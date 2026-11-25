@@ -6,14 +6,13 @@
 #include "BallBase.h"
 #include "Bludger.generated.h"
 
-/**
- * 
- */
-
 class UBludgerDataAsset;
 class ABroom;
-class AQuaffle;
 
+/**
+ * Hunts the Quaffle carrier with steering behaviours (seek / wander / avoid). All behaviour
+ * runs on the server; movement replicates. Any number of Bludgers can exist.
+ */
 UCLASS()
 class QUIDPROWIZ_API ABludger : public ABallBase
 {
@@ -23,70 +22,55 @@ public:
 
 	ABludger();
 
-protected:
-
-	virtual void BeginPlay() override;
-
-public:
-
 	virtual void Tick(float DeltaTime) override;
 
 protected:
 
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Bludger | Data")
-	UBludgerDataAsset* BludgerDataAsset;
+	TObjectPtr<UBludgerDataAsset> BludgerDataAsset;
 
 	UFUNCTION()
-	void OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, 
+	void OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp,
 		int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult);
 
 private:
 
 	UPROPERTY()
-	ABroom* TargetBroom = nullptr;
-
-	UPROPERTY()
-	AQuaffle* QuaffleRef = nullptr;
-
-	FTimerHandle SearchTimerHandle;
+	TObjectPtr<ABroom> TargetBroom = nullptr;
 
 	FVector CurrentVelocity = FVector::ZeroVector;
 	FVector WanderTarget = FVector::ZeroVector;
-	FTimerHandle WanderTimerHandle;
-	bool bIsWandering = false;
-
-	bool bCanHit = true;
-	FTimerHandle HitCooldownTimerHandle;
-
-	void ResetHitCoolDown();
-
-	void SerchForTarget();
-	void ChaseTarget(float DeltaTime);
-	void OnHitBroom(ABroom* HitBroom);
-
-	bool IsTargetValid() const;
-
-	void PickNewWanderTarget();
-	void ChaseWanderTarget(float DeltaTime);
-
-	void ResetToRandomLocation();
-
-	UPROPERTY(EditAnywhere, Category = "Bludger | Gameplay")
-	float ResetRadius = 2000.f;
-
-	UPROPERTY(EditAnywhere, Category = "Bludger | Gameplay")
-	float ResetHeight = 600.f;
 
 	float TargetLockTimer = 0.f;
 	bool bTargetLocked = false;
+	bool bCanHit = true;
 
-	float ScoreTarget(ABroom* Broom) const;
-	bool ShouldSwitchTarget(ABroom* NewTarget) const;
+	FTimerHandle SearchTimerHandle;
+	FTimerHandle HitCooldownTimerHandle;
+
+	void SearchForTarget();
+	bool IsTargetValid() const;
+	float ScoreTarget(const ABroom* Broom) const;
+	bool ShouldSwitchTarget(const ABroom* NewTarget) const;
+
+	void ChaseTarget(float DeltaTime);
+	void ChaseWanderTarget(float DeltaTime);
+	void PickNewWanderTarget();
+
+	/** Applies velocity with a sweep, slides off blocking hits and turns to face travel. */
+	void MoveWithVelocity(float DeltaTime, bool bRepickWanderOnHit);
 
 	FVector ComputeAvoidanceForce() const;
 	FVector ComputeSeekForce(const FVector& TargetLocation) const;
 	FVector ComputeWanderForce() const;
 
-	FVector CurrentSteering = FVector::ZeroVector;
-	float SteeringInterpSpeed = 5.f;
+	void OnHitBroom(ABroom* HitBroom);
+	void ResetToRandomLocation();
+	void ResetHitCooldown() { bCanHit = true; }
+
+	UFUNCTION(NetMulticast, Unreliable)
+	void MulticastPlayHitEffect(FVector_NetQuantize Location);
 };

@@ -6,18 +6,18 @@
 #include "AIController.h"
 #include "AIBroomController.generated.h"
 
-/**
- * 
- */
-
 class UBehaviorTree;
-class UBlackboardComponent;
 class UBroomAIDataAsset;
 class ABroom;
 class AQuaffle;
 class ABludger;
 class AGoalRing;
 
+/**
+ * Server-side opponent brain. Senses the world into the blackboard on an interval and exposes
+ * high-level actions that behavior tree tasks call. All actions go through the broom's
+ * Perform* API, so the AI obeys exactly the same rules as a player.
+ */
 UCLASS()
 class QUIDPROWIZ_API AAIBroomController : public AAIController
 {
@@ -27,8 +27,8 @@ public:
 
 	AAIBroomController();
 
-	virtual void BeginPlay() override;
 	virtual void OnPossess(APawn* InPawn) override;
+	virtual void OnUnPossess() override;
 	virtual void Tick(float DeltaTime) override;
 
 	void FlyToLocation(const FVector& TargetLocation, float DeltaTime);
@@ -39,16 +39,7 @@ public:
 	ABroom* GetControlledBroom() const;
 	UBroomAIDataAsset* GetAIData() const { return AIData; }
 
-protected:
-
-	UPROPERTY(EditDefaultsOnly, Category = "AI")
-	UBehaviorTree* BehaviorTree;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "AI")
-	UBroomAIDataAsset* AIData;
-
-private:
-
+	// Blackboard keys (must match BB_BroomAI).
 	static const FName BBKey_QuaffleLocation;
 	static const FName BBKey_GoalLocation;
 	static const FName BBKey_BludgerLocation;
@@ -57,15 +48,19 @@ private:
 	static const FName BBKey_IsQuaffleFree;
 	static const FName BBKey_TargetGoal;
 
-	UPROPERTY()
-	AQuaffle* QuaffleRef = nullptr;
+protected:
 
-	UPROPERTY()
-	ABludger* BludgerRef = nullptr;
+	UPROPERTY(EditDefaultsOnly, Category = "AI")
+	TObjectPtr<UBehaviorTree> BehaviorTree;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "AI")
+	TObjectPtr<UBroomAIDataAsset> AIData;
+
+private:
 
 	float TimeSinceLastUpdate = 0.f;
 
 	void UpdateBlackboard();
-	void FindGameActors();
 	AGoalRing* FindBestGoal() const;
+	ABludger* FindNearestBludger(float* OutDistance = nullptr) const;
 };

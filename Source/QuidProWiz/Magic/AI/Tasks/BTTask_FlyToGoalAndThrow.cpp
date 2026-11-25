@@ -42,7 +42,7 @@ void UBTTask_FlyToGoalAndThrow::TickTask(UBehaviorTreeComponent& OwnerComp, uint
 		return;
 	}
 
-	AGoalRing* TargetGoal = Cast<AGoalRing>(BB->GetValueAsObject(TEXT("TargetGoal")));
+	AGoalRing* TargetGoal = Cast<AGoalRing>(BB->GetValueAsObject(AAIBroomController::BBKey_TargetGoal));
 	if (!TargetGoal)
 	{
 		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
@@ -54,15 +54,21 @@ void UBTTask_FlyToGoalAndThrow::TickTask(UBehaviorTreeComponent& OwnerComp, uint
 	const FVector GoalForward = TargetGoal->GetActorForwardVector();
 	const float Distance = FVector::Dist(BroomLocation, GoalLocation);
 
-	const FVector ToGoal = (GoalLocation - BroomLocation).GetSafeNormal();
 	const float SideDot = FVector::DotProduct(BroomLocation - GoalLocation, GoalForward);
 	const bool bOnCorrectSide = SideDot < 0.f;
 
 	if (!bOnCorrectSide)
 	{
-		const FVector CorrectSideLocation = GoalLocation + (-GoalForward * 1000.f) + FVector(0.f, 0.f, GoalLocation.Z);
+		// Approach point in front of the ring (the old version added the ring's Z twice).
+		const FVector CorrectSideLocation = GoalLocation - GoalForward * 1000.f;
 		Controller->FlyToLocation(CorrectSideLocation, DeltaSeconds);
 
+		return;
+	}
+
+	if (!Controller->GetAIData())
+	{
+		FinishLatentTask(OwnerComp, EBTNodeResult::Failed);
 		return;
 	}
 
