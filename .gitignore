@@ -73,3 +73,6 @@ Plugins/**/Intermediate/*
 
 # Cache files for the editor to use
 DerivedDataCache/*
+
+# Blender pipeline outputs (rebuild with Tools/Blender/BuildAsset.ps1)
+SourceArt/Generated/
