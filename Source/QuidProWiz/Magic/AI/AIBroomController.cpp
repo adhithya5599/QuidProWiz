@@ -31,6 +31,9 @@ namespace BroomAIConstants
 AAIBroomController::AAIBroomController()
 {
 	PrimaryActorTick.bCanEverTick = true;
+
+	// The broom steers by rotating this controller's yaw; don't snap it back to the pawn's facing.
+	bSetControlRotationFromPawnOrientation = false;
 }
 
 void AAIBroomController::OnPossess(APawn* InPawn)

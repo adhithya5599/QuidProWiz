@@ -3,13 +3,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "GameFramework/Pawn.h"
+#include "GameFramework/Character.h"
 #include "Broom.generated.h"
 
 class UStaticMeshComponent;
 class UInputAction;
-class UFloatingPawnMovement;
-class UCapsuleComponent;
 class USpringArmComponent;
 class UCameraComponent;
 class UInputMappingContext;
@@ -17,6 +15,7 @@ struct FInputActionValue;
 class USkeletalMeshComponent;
 class UCameraShakeBase;
 class UBroomDataAsset;
+class UBroomMovementComponent;
 class USoundManager;
 class AQuaffle;
 class AGoalRing;
@@ -24,27 +23,29 @@ class UGoalTargetingComponent;
 class UZoneUIManager;
 
 /**
- * The flying pawn used by players and AI.
+ * The flying character used by players and AI.
  *
- * Both input and AI controllers drive it through the same Perform* API, so every rule
- * (stun, match phase, cooldowns) applies to both. Gameplay outcomes (pickup, throw, hits,
- * stun) are decided on the server; requests from clients go through Server RPCs.
+ * Movement is client-predicted by UBroomMovementComponent (the Character Movement Component in
+ * flying mode): forward/ascend input becomes acceleration, turning rotates the controller's yaw,
+ * and boost travels with each saved move. Both input and AI controllers drive the broom through
+ * the same Perform* API, so every rule (stun, match phase, cooldowns) applies to both. Gameplay
+ * outcomes (pickup, throw, hits, stun) are decided on the server via Server RPCs.
  *
- * Movement networking is an interim client-authoritative sync: the owning machine flies the
- * broom locally and sends its transform to the server, which sanity-checks and replicates it.
- * It will be replaced by a predicted movement model in a later pass.
+ * Visual components hang off the Character's mesh component, which the movement component
+ * smooths on remote machines, so other players' brooms glide instead of snapping.
  */
 UCLASS()
-class QUIDPROWIZ_API ABroom : public APawn
+class QUIDPROWIZ_API ABroom : public ACharacter
 {
 	GENERATED_BODY()
 
 public:
 
-	ABroom();
+	ABroom(const FObjectInitializer& ObjectInitializer);
 
 	virtual void Tick(float DeltaTime) override;
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
+	virtual void NotifyControllerChanged() override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 protected:
@@ -52,14 +53,8 @@ protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Broom|Movement")
-	TObjectPtr<UFloatingPawnMovement> BroomMovementComponent;
-
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Broom|Mesh")
 	TObjectPtr<UStaticMeshComponent> BroomMesh;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Broom|Collision")
-	TObjectPtr<UCapsuleComponent> BroomCollisionComponent;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Broom|Camera")
 	TObjectPtr<USpringArmComponent> BroomCameraBoom;
@@ -134,7 +129,7 @@ public:
 	void ThrowQuaffleAtGoal(AGoalRing* Goal, float ArcBias = 1.f);
 
 	/** AI speed cap; <= 0 returns to the data asset speed. */
-	void SetSpeedOverride(float NewSpeedOverride);
+	void SetSpeedOverride(float NewSpeedOverride) { SpeedOverride = NewSpeedOverride; }
 
 	// --- Server-side gameplay -----------------------------------------------------------------
 
@@ -150,12 +145,25 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Broom|Components")
 	USkeletalMeshComponent* GetRiderMesh() const { return RiderMesh; }
 
+	UFUNCTION(BlueprintPure, Category = "Broom|Movement")
+	UBroomMovementComponent* GetBroomMovement() const;
+
+	/** Current flight speed in cm/s. */
+	UFUNCTION(BlueprintPure, Category = "Broom|Movement")
+	float GetCurrentSpeed() const;
+
+	/** Current speed limit after AI override, boost and stun. */
+	UFUNCTION(BlueprintPure, Category = "Broom|Movement")
+	float GetCurrentMaxSpeed() const;
+
+	UBroomDataAsset* GetBroomData() const { return BroomData; }
 	UCameraComponent* GetBroomCamera() const { return BroomCamera; }
-	UFloatingPawnMovement* GetBroomMovementComponent() const { return BroomMovementComponent; }
 	USoundManager* GetSoundManager() const { return SoundManager; }
 	AQuaffle* GetHeldQuaffle() const { return HeldQuaffle; }
 	bool IsHoldingQuaffle() const { return HeldQuaffle != nullptr; }
 	bool IsStunned() const { return bIsStunned; }
+	float GetStunSpeedMultiplier() const { return StunSpeedMultiplier; }
+	float GetSpeedOverride() const { return SpeedOverride; }
 	bool CanPickupQuaffle() const { return !bPickupCooldown; }
 
 	void TriggerBludgerHitShake();
@@ -179,7 +187,10 @@ protected:
 	void AttemptPickupQuaffle();
 	void ThrowQuaffle();
 
-	virtual void UpdateHeading(float DeltaTime);
+	/** Locally controlled brooms turn by rotating the controller's yaw; movement follows it. */
+	virtual void UpdateControlHeading(float DeltaTime);
+
+	/** Cosmetic bank/tilt derived from observed motion, so it looks the same on every machine. */
 	virtual void UpdateMeshTilt(float DeltaTime);
 
 private:
@@ -195,10 +206,6 @@ private:
 	UPROPERTY(Replicated)
 	float StunSpeedMultiplier = 1.f;
 
-	/** Turn/ascend input for cosmetic mesh tilt on remote machines (X = turn, Y = ascend). */
-	UPROPERTY(Replicated)
-	FVector2D ReplicatedTiltInput = FVector2D::ZeroVector;
-
 	UFUNCTION()
 	void OnRep_IsStunned();
 
@@ -210,12 +217,6 @@ private:
 	UFUNCTION(Server, Reliable)
 	void ServerThrowQuaffleAtGoal(AGoalRing* Goal, float ArcBias);
 
-	UFUNCTION(Server, Unreliable)
-	void ServerSyncMovement(FVector_NetQuantize10 Location, float Yaw, FVector2D TiltInput);
-
-	UFUNCTION(Client, Reliable)
-	void ClientCorrectPosition(FVector_NetQuantize10 Location, float Yaw);
-
 	UFUNCTION(NetMulticast, Unreliable)
 	void MulticastPlayQuaffleSound(bool bThrow);
 
@@ -223,17 +224,16 @@ private:
 	void MulticastBeginRagdoll(FVector_NetQuantizeNormal ImpulseDirection, float ImpulseStrength, float RagdollDuration);
 
 	UFUNCTION(NetMulticast, Reliable)
-	void MulticastFinishRespawn(FVector_NetQuantize10 Location, FRotator Rotation);
+	void MulticastFinishRespawn();
 
 	// --- Local state --------------------------------------------------------------------------
 
 	float CurrentTurnInput = 0.f;
 	float CurrentAscendInput = 0.f;
-	float CurrentHeadingYaw = 0.f;
+	float LastVisualYaw = 0.f;
 	FRotator InitialMeshRotation = FRotator::ZeroRotator;
 	FTransform InitialRiderTransform;
 
-	bool bBoostActive = false;
 	float SpeedOverride = 0.f;
 
 	bool bIsRagdolling = false;
@@ -248,15 +248,9 @@ private:
 
 	bool bBludgerWarningActive = false;
 
-	float TimeSinceMoveSync = 0.f;
-	float LastServerMoveSyncTime = -1.f;
-
-	void RefreshMovementSpeed();
 	void ResetPickupCooldown() { bPickupCooldown = false; }
 	void HandleRagdollTimeout();
 	void Respawn();
 	bool IsMatchInProgress() const;
 	void UpdateBludgerWarning();
-	void UpdateClientMoveSync(float DeltaTime);
-	bool IsAutonomousClient() const;
 };

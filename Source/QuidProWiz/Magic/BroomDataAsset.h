@@ -23,6 +23,7 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Broom|Movement", meta = (ClampMin = "0"))
 	float AccelerationMultiplier = 2.f;
 
+	/** Steering rate in degrees per second at full turn input. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Broom|Movement")
 	float TurnSpeed = 5.f;
 
@@ -35,8 +36,9 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Broom|Movement")
 	float AscendTiltAngle = 15.f;
 
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Broom|Movement")
-	float HeadingInterpSpeed = 5.f;
+	/** How fast the broom swings round to the heading the rider steers toward, in degrees per second. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Broom|Movement", meta = (ClampMin = "1"))
+	float HeadingRotationRate = 540.f;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Broom|Movement")
 	float SpeedBoostMultiplier = 5.f;
@@ -47,14 +49,4 @@ public:
 	/** The local player gets a warning when any Bludger is closer than this. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Broom|Feedback")
 	float BludgerWarningDistance = 800.f;
-
-	/**
-	 * Network (interim client-authoritative sync): how often the owning client sends its
-	 * transform to the server, and how far it may move per second before the server rejects it.
-	 */
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Broom|Network", meta = (ClampMin = "1"))
-	float ClientMoveSyncRate = 30.f;
-
-	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Broom|Network", meta = (ClampMin = "0"))
-	float MaxClientMoveSpeedTolerance = 1.5f;
 };

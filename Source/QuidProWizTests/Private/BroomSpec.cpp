@@ -5,7 +5,7 @@
 #include "Broom.h"
 #include "BroomDataAsset.h"
 #include "Quaffle.h"
-#include "GameFramework/FloatingPawnMovement.h"
+#include "GameFramework/CharacterMovementComponent.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -15,7 +15,19 @@ BEGIN_DEFINE_SPEC(FQuidditchBroomSpec, "QuidProWiz.Broom",
 	ABroom* Broom = nullptr;
 	const UBroomDataAsset* Defaults = nullptr;
 
-	float MaxSpeed() const { return Broom->GetBroomMovementComponent()->MaxSpeed; }
+	float MaxSpeed() const { return Broom->GetCurrentMaxSpeed(); }
+
+	/** Holds the given inputs every frame for Seconds. */
+	void FlyFor(float Seconds, float Forward, float Turn = 0.f)
+	{
+		ABroom* LocalBroom = Broom;
+		TestWorld->TickUntil(Seconds, [LocalBroom, Forward, Turn]()
+		{
+			LocalBroom->PerformMove(Forward);
+			LocalBroom->PerformTurn(Turn);
+			return false;
+		});
+	}
 END_DEFINE_SPEC(FQuidditchBroomSpec)
 
 void FQuidditchBroomSpec::Define()
@@ -73,6 +85,51 @@ void FQuidditchBroomSpec::Define()
 
 			Broom->SetSpeedOverride(0.f);
 			TestEqual(TEXT("Override cleared"), MaxSpeed(), Defaults->Speed);
+		});
+	});
+
+	Describe("Flight (Character Movement, flying mode)", [this]()
+	{
+		BeforeEach([this]() { TestWorld->Possess(Broom); });
+
+		It("flies forward under input without exceeding its speed limit", [this]()
+		{
+			FlyFor(1.f, 1.f);
+
+			TestTrue(TEXT("Moved forward"), Broom->GetActorLocation().X > 300.f);
+			TestTrue(TEXT("Within the speed limit"), Broom->GetCurrentSpeed() <= MaxSpeed() + 1.f);
+		});
+
+		It("covers more ground while boosting", [this]()
+		{
+			FlyFor(1.f, 1.f);
+			const float NormalDistance = Broom->GetActorLocation().X;
+
+			Broom->SetActorLocation(FVector::ZeroVector);
+			Broom->GetCharacterMovement()->StopMovementImmediately();
+			Broom->PerformSpeedBoost(true);
+			FlyFor(1.f, 1.f);
+
+			AddInfo(FString::Printf(TEXT("Normal %.0f vs boosted %.0f units in 1s"), NormalDistance, Broom->GetActorLocation().X));
+			TestTrue(TEXT("Boosted flight goes further"), Broom->GetActorLocation().X > NormalDistance * 1.5f);
+		});
+
+		It("turns at the data asset's turn speed", [this]()
+		{
+			Broom->GetBroomData()->TurnSpeed = 90.f;
+			FlyFor(1.f, 0.f, 1.f);
+
+			const float Yaw = Broom->GetActorRotation().Yaw;
+			AddInfo(FString::Printf(TEXT("Yaw after 1s of full turn: %.1f"), Yaw));
+			TestTrue(TEXT("Turned roughly 90 degrees"), Yaw > 75.f && Yaw < 95.f);
+		});
+
+		It("doesn't fly while stunned", [this]()
+		{
+			Broom->ApplyStun(5.f, 0.f);
+			FlyFor(1.f, 1.f);
+
+			TestTrue(TEXT("Stayed put"), Broom->GetActorLocation().Size() < 1.f);
 		});
 	});
 

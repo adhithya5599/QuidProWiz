@@ -10,6 +10,7 @@
 #include "DataAsset/BludgerDataAsset.h"
 #include "DataAsset/GoalRingDataAsset.h"
 #include "QuidProWizGameStateBase.h"
+#include "AIBroomController.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "GameFramework/WorldSettings.h"
@@ -118,6 +119,13 @@ AGoalRing* FQuidditchTestWorld::SpawnGoal(const FVector& Location, const FRotato
 		SetObjectProperty(&Goal, TEXT("GoalDataAsset"), NewObject<UGoalRingDataAsset>(GetTransientPackage()));
 		SetPropertyValue(&Goal, TEXT("OwningTeam"), Team);
 	});
+}
+
+void FQuidditchTestWorld::Possess(ABroom* Broom)
+{
+	AAIBroomController* Controller = World->SpawnActor<AAIBroomController>();
+	check(Controller);
+	Controller->Possess(Broom);
 }
 
 AQuidProWizGameStateBase* FQuidditchTestWorld::SpawnGameState(int32 ScoreToWin, int32 CountdownDuration)

@@ -2,6 +2,7 @@
 
 #include "Broom.h"
 #include "BroomDataAsset.h"
+#include "BroomMovementComponent.h"
 #include "SoundManager.h"
 #include "Quaffle.h"
 #include "Bludger.h"
@@ -18,7 +19,7 @@
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
-#include "GameFramework/FloatingPawnMovement.h"
+#include "GameFramework/Controller.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
@@ -29,20 +30,28 @@ namespace BroomConstants
 	constexpr float PickupRequestInterval = 0.2f;
 }
 
-ABroom::ABroom()
+ABroom::ABroom(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer.SetDefaultSubobjectClass<UBroomMovementComponent>(ACharacter::CharacterMovementComponentName))
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-	bReplicates = true;
-	SetReplicatingMovement(true);
+	// The movement component turns the broom toward the controller's yaw at its rotation rate.
+	bUseControllerRotationPitch = false;
+	bUseControllerRotationYaw = false;
+	bUseControllerRotationRoll = false;
 
-	BroomCollisionComponent = CreateDefaultSubobject<UCapsuleComponent>(TEXT("BroomCollisionComponent"));
-	BroomCollisionComponent->InitCapsuleSize(42.f, 96.0f);
-	BroomCollisionComponent->SetGenerateOverlapEvents(true);
-	RootComponent = BroomCollisionComponent;
+	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
+	GetCapsuleComponent()->SetGenerateOverlapEvents(true);
+
+	// The Character's mesh component is an empty visual root: the movement component offsets it
+	// to smooth corrections on remote machines, and the broom and rider ride along with it.
+	USceneComponent* VisualRoot = GetMesh();
 
 	BroomMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BroomMesh"));
-	BroomMesh->SetupAttachment(RootComponent);
+	BroomMesh->SetupAttachment(VisualRoot);
+
+	RiderMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("RiderMesh"));
+	RiderMesh->SetupAttachment(VisualRoot);
 
 	BroomCameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("BroomCameraBoom"));
 	BroomCameraBoom->SetupAttachment(RootComponent);
@@ -50,15 +59,9 @@ ABroom::ABroom()
 	BroomCameraBoom->bUsePawnControlRotation = false;
 	BroomCameraBoom->bDoCollisionTest = true;
 
-	RiderMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("RiderMesh"));
-	RiderMesh->SetupAttachment(RootComponent);
-
 	BroomCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("BroomCamera"));
 	BroomCamera->SetupAttachment(BroomCameraBoom, USpringArmComponent::SocketName);
 	BroomCamera->bUsePawnControlRotation = false;
-
-	BroomMovementComponent = CreateDefaultSubobject<UFloatingPawnMovement>(TEXT("BroomMovementComponent"));
-	BroomMovementComponent->MaxSpeed = 1000.f;
 
 	GoalTargetingComponent = CreateDefaultSubobject<UGoalTargetingComponent>(TEXT("GoalTargetingComponent"));
 	ZoneUIManager = CreateDefaultSubobject<UZoneUIManager>(TEXT("ZoneUIManager"));
@@ -72,7 +75,6 @@ void ABroom::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimePr
 	DOREPLIFETIME(ABroom, HeldQuaffle);
 	DOREPLIFETIME(ABroom, bIsStunned);
 	DOREPLIFETIME(ABroom, StunSpeedMultiplier);
-	DOREPLIFETIME_CONDITION(ABroom, ReplicatedTiltInput, COND_SkipOwner);
 }
 
 void ABroom::BeginPlay()
@@ -89,14 +91,17 @@ void ABroom::BeginPlay()
 		InitialRiderTransform = RiderMesh->GetRelativeTransform();
 	}
 
-	CurrentHeadingYaw = GetActorRotation().Yaw;
+	LastVisualYaw = GetActorRotation().Yaw;
+
+	if (BroomData)
+	{
+		GetCharacterMovement()->RotationRate = FRotator(0.f, BroomData->HeadingRotationRate, 0.f);
+	}
 
 	if (UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
 	{
 		Subsystem->RegisterBroom(this);
 	}
-
-	RefreshMovementSpeed();
 }
 
 void ABroom::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -115,24 +120,24 @@ void ABroom::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	Super::EndPlay(EndPlayReason);
 }
 
+void ABroom::NotifyControllerChanged()
+{
+	Super::NotifyControllerChanged();
+
+	// Start the controller facing the way the broom faces, so it doesn't swing round on possession.
+	if (Controller && IsLocallyControlled())
+	{
+		Controller->SetControlRotation(FRotator(0.f, GetActorRotation().Yaw, 0.f));
+	}
+}
+
 void ABroom::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	// Heading is owned by whoever flies the broom (local player or server-side AI).
-	if (IsLocallyControlled())
-	{
-		UpdateHeading(DeltaTime);
-
-		if (HasAuthority())
-		{
-			ReplicatedTiltInput = FVector2D(CurrentTurnInput, CurrentAscendInput);
-		}
-	}
-
+	UpdateControlHeading(DeltaTime);
 	UpdateMeshTilt(DeltaTime);
 	UpdateBludgerWarning();
-	UpdateClientMoveSync(DeltaTime);
 }
 
 // --- Input ------------------------------------------------------------------------------------
@@ -180,26 +185,49 @@ void ABroom::ThrowQuaffle() { PerformThrowQuaffle(); }
 
 // --- Flight -----------------------------------------------------------------------------------
 
-void ABroom::UpdateHeading(float DeltaTime)
+UBroomMovementComponent* ABroom::GetBroomMovement() const
 {
-	if (!BroomData) return;
+	return Cast<UBroomMovementComponent>(GetCharacterMovement());
+}
 
-	CurrentHeadingYaw += CurrentTurnInput * BroomData->TurnSpeed * DeltaTime;
-	const FRotator TargetRotation(0.f, CurrentHeadingYaw, 0.f);
-	SetActorRotation(FMath::RInterpTo(GetActorRotation(), TargetRotation, DeltaTime, BroomData->HeadingInterpSpeed));
+float ABroom::GetCurrentSpeed() const
+{
+	return GetVelocity().Size();
+}
+
+float ABroom::GetCurrentMaxSpeed() const
+{
+	const UCharacterMovementComponent* Movement = GetCharacterMovement();
+	return Movement ? Movement->GetMaxSpeed() : 0.f;
+}
+
+void ABroom::UpdateControlHeading(float DeltaTime)
+{
+	if (!BroomData || !Controller || !IsLocallyControlled()) return;
+	if (FMath::IsNearlyZero(CurrentTurnInput)) return;
+
+	FRotator ControlRotation = Controller->GetControlRotation();
+	ControlRotation.Yaw += CurrentTurnInput * BroomData->TurnSpeed * DeltaTime;
+	ControlRotation.Pitch = 0.f;
+	ControlRotation.Roll = 0.f;
+	Controller->SetControlRotation(ControlRotation);
 }
 
 void ABroom::UpdateMeshTilt(float DeltaTime)
 {
-	if (!BroomData || !BroomMesh) return;
+	if (!BroomData || !BroomMesh || DeltaTime <= 0.f) return;
 
-	const FVector2D TiltInput = IsLocallyControlled()
-		? FVector2D(CurrentTurnInput, CurrentAscendInput)
-		: ReplicatedTiltInput;
+	const float Yaw = GetActorRotation().Yaw;
+	const float YawRate = FMath::FindDeltaAngleDegrees(LastVisualYaw, Yaw) / DeltaTime;
+	LastVisualYaw = Yaw;
+
+	const float TurnAmount = BroomData->TurnSpeed > 0.f ? FMath::Clamp(YawRate / BroomData->TurnSpeed, -1.f, 1.f) : 0.f;
+	const float MaxSpeed = GetCurrentMaxSpeed();
+	const float AscendAmount = MaxSpeed > 0.f ? FMath::Clamp(GetVelocity().Z / MaxSpeed, -1.f, 1.f) : 0.f;
 
 	FRotator TargetMeshRotation = InitialMeshRotation;
-	TargetMeshRotation.Pitch += -TiltInput.X * BroomData->BankAngle;
-	TargetMeshRotation.Roll += -TiltInput.Y * BroomData->AscendTiltAngle;
+	TargetMeshRotation.Pitch += -TurnAmount * BroomData->BankAngle;
+	TargetMeshRotation.Roll += -AscendAmount * BroomData->AscendTiltAngle;
 
 	BroomMesh->SetRelativeRotation(FMath::RInterpTo(BroomMesh->GetRelativeRotation(), TargetMeshRotation,
 		DeltaTime, BroomData->BankInterpSpeed));
@@ -218,7 +246,7 @@ void ABroom::PerformAscend(float AxisValue)
 	if (bIsStunned || !IsMatchInProgress()) return;
 
 	CurrentAscendInput = AxisValue;
-	if (!Controller) return;
+	if (!Controller || FMath::IsNearlyZero(AxisValue)) return;
 	AddMovementInput(FVector::UpVector, CurrentAscendInput);
 }
 
@@ -231,44 +259,10 @@ void ABroom::PerformTurn(float AxisValue)
 
 void ABroom::PerformSpeedBoost(bool bIsActive)
 {
-	bBoostActive = bIsActive;
-	RefreshMovementSpeed();
-}
-
-void ABroom::SetSpeedOverride(float NewSpeedOverride)
-{
-	if (FMath::IsNearlyEqual(SpeedOverride, NewSpeedOverride)) return;
-
-	SpeedOverride = NewSpeedOverride;
-	RefreshMovementSpeed();
-}
-
-void ABroom::RefreshMovementSpeed()
-{
-	if (!BroomData || !BroomMovementComponent) return;
-
-	// Single owner for flight speed: base (data asset or AI override), then boost, then stun.
-	const float BaseSpeed = SpeedOverride > 0.f ? SpeedOverride : BroomData->Speed;
-
-	float MaxSpeed = BaseSpeed;
-	float Acceleration = BaseSpeed * BroomData->AccelerationMultiplier;
-
-	if (bBoostActive)
+	if (UBroomMovementComponent* Movement = GetBroomMovement())
 	{
-		MaxSpeed = BaseSpeed * BroomData->SpeedBoostMultiplier;
-		Acceleration = BaseSpeed * BroomData->SpeedBoostAccelerationMultiplier;
+		Movement->SetWantsToBoost(bIsActive);
 	}
-
-	if (bIsStunned)
-	{
-		MaxSpeed *= StunSpeedMultiplier;
-		Acceleration *= StunSpeedMultiplier;
-	}
-
-	BroomMovementComponent->MaxSpeed = MaxSpeed;
-	BroomMovementComponent->Acceleration = Acceleration;
-	BroomMovementComponent->Deceleration = BaseSpeed * BroomData->AccelerationMultiplier;
-	BroomMovementComponent->TurningBoost = BroomData->TurnSpeed;
 }
 
 // --- Quaffle ----------------------------------------------------------------------------------
@@ -405,7 +399,7 @@ void ABroom::OnRep_IsStunned()
 		CurrentAscendInput = 0.f;
 	}
 
-	RefreshMovementSpeed();
+	// Speed limits are read from the stun state by the movement component every frame.
 	OnStunChanged.Broadcast(bIsStunned);
 }
 
@@ -472,11 +466,14 @@ void ABroom::Respawn()
 	if (!HasAuthority()) return;
 
 	bIsRagdolling = false;
-	MulticastFinishRespawn(RespawnTransform.GetLocation(), RespawnTransform.Rotator());
+
+	// Server-side teleport; the movement component corrects the owning client automatically.
+	TeleportTo(RespawnTransform.GetLocation(), RespawnTransform.Rotator(), false, true);
+	MulticastFinishRespawn();
 	RecoverFromStun();
 }
 
-void ABroom::MulticastFinishRespawn_Implementation(FVector_NetQuantize10 Location, FRotator Rotation)
+void ABroom::MulticastFinishRespawn_Implementation()
 {
 	GetWorldTimerManager().ClearTimer(RagdollTimerHandle);
 
@@ -485,7 +482,7 @@ void ABroom::MulticastFinishRespawn_Implementation(FVector_NetQuantize10 Locatio
 		RiderMesh->SetSimulatePhysics(false);
 		RiderMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		RiderMesh->SetAnimationMode(EAnimationMode::AnimationBlueprint);
-		RiderMesh->AttachToComponent(RootComponent, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+		RiderMesh->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 		RiderMesh->SetRelativeTransform(InitialRiderTransform);
 		RiderMesh->SetVisibility(true);
 	}
@@ -493,60 +490,6 @@ void ABroom::MulticastFinishRespawn_Implementation(FVector_NetQuantize10 Locatio
 	if (BroomMesh)
 	{
 		BroomMesh->SetVisibility(true);
-	}
-
-	// Teleport on every machine, including the owning client whose position isn't replicated.
-	SetActorLocationAndRotation(Location, Rotation, false, nullptr, ETeleportType::TeleportPhysics);
-	CurrentHeadingYaw = Rotation.Yaw;
-}
-
-// --- Network movement sync (interim) ----------------------------------------------------------
-
-bool ABroom::IsAutonomousClient() const
-{
-	return !HasAuthority() && IsLocallyControlled();
-}
-
-void ABroom::UpdateClientMoveSync(float DeltaTime)
-{
-	if (!IsAutonomousClient() || !BroomData) return;
-
-	TimeSinceMoveSync += DeltaTime;
-	if (TimeSinceMoveSync < 1.f / BroomData->ClientMoveSyncRate) return;
-	TimeSinceMoveSync = 0.f;
-
-	ServerSyncMovement(GetActorLocation(), GetActorRotation().Yaw, FVector2D(CurrentTurnInput, CurrentAscendInput));
-}
-
-void ABroom::ServerSyncMovement_Implementation(FVector_NetQuantize10 Location, float Yaw, FVector2D TiltInput)
-{
-	if (!BroomData) return;
-
-	const float Now = GetWorld()->GetTimeSeconds();
-	const float Elapsed = LastServerMoveSyncTime < 0.f ? 1.f : FMath::Clamp(Now - LastServerMoveSyncTime, 0.f, 1.f);
-	LastServerMoveSyncTime = Now;
-
-	// Reject moves faster than a boosting broom could fly (plus slack for jitter).
-	const float MaxPossibleSpeed = BroomData->Speed * FMath::Max(1.f, BroomData->SpeedBoostMultiplier);
-	const float AllowedDistance = MaxPossibleSpeed * Elapsed * BroomData->MaxClientMoveSpeedTolerance + 100.f;
-
-	if (bIsRagdolling || FVector::Dist(Location, GetActorLocation()) > AllowedDistance)
-	{
-		ClientCorrectPosition(GetActorLocation(), GetActorRotation().Yaw);
-		return;
-	}
-
-	SetActorLocationAndRotation(Location, FRotator(0.f, Yaw, 0.f));
-	ReplicatedTiltInput = FVector2D(FMath::Clamp(TiltInput.X, -1.f, 1.f), FMath::Clamp(TiltInput.Y, -1.f, 1.f));
-}
-
-void ABroom::ClientCorrectPosition_Implementation(FVector_NetQuantize10 Location, float Yaw)
-{
-	SetActorLocationAndRotation(Location, FRotator(0.f, Yaw, 0.f), false, nullptr, ETeleportType::TeleportPhysics);
-	CurrentHeadingYaw = Yaw;
-	if (BroomMovementComponent)
-	{
-		BroomMovementComponent->StopMovementImmediately();
 	}
 }
 
