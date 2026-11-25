@@ -44,6 +44,9 @@ public:
 	ABludger* SpawnBludger(const FVector& Location);
 	AGoalRing* SpawnGoal(const FVector& Location, const FRotator& Rotation, EGoalTeam Team = EGoalTeam::TeamA);
 
+	/** Gives Broom an AI controller so Perform* input moves it, like a player or bot would. */
+	void Possess(ABroom* Broom);
+
 	/** Spawns the match game state and registers it as the world's game state. */
 	AQuidProWizGameStateBase* SpawnGameState(int32 ScoreToWin, int32 CountdownDuration);
 
