@@ -1,41 +1,83 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "QuidProWizGameStateBase.h"
-#include "Kismet/GameplayStatics.h"
-#include "TimerManager.h"
+#include "QuidditchWorldSubsystem.h"
+#include "GoalRing.h"
 #include "Broom.h"
+#include "SoundManager.h"
+#include "Engine/World.h"
+#include "Kismet/GameplayStatics.h"
+#include "Net/UnrealNetwork.h"
+#include "TimerManager.h"
 
 AQuidProWizGameStateBase::AQuidProWizGameStateBase()
 {
-	CurrentState = MakeUnique<MatchStateWaitingToStart>();
 }
 
-void AQuidProWizGameStateBase::PostInitializeComponents()
+void AQuidProWizGameStateBase::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
-	Super::PostInitializeComponents();
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
-	AGoalRing::OnGoalScored.AddUObject(this, &AQuidProWizGameStateBase::AddScore);
+	DOREPLIFETIME(AQuidProWizGameStateBase, MatchPhase);
+	DOREPLIFETIME(AQuidProWizGameStateBase, TeamAScore);
+	DOREPLIFETIME(AQuidProWizGameStateBase, TeamBScore);
+	DOREPLIFETIME(AQuidProWizGameStateBase, CountdownSeconds);
+	DOREPLIFETIME(AQuidProWizGameStateBase, bTeamAWon);
+}
+
+void AQuidProWizGameStateBase::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (!HasAuthority()) return;
+
+	if (UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
+	{
+		GoalScoredHandle = Subsystem->OnGoalScored.AddUObject(this, &AQuidProWizGameStateBase::AddScore);
+	}
 
 	StartCountdown();
 }
 
-void AQuidProWizGameStateBase::SetMatchState(TUniquePtr<MatchStateBase> NewState)
+void AQuidProWizGameStateBase::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	if (!NewState) return;
+	if (UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
+	{
+		Subsystem->OnGoalScored.Remove(GoalScoredHandle);
+	}
 
-	CurrentState = MoveTemp(NewState);
+	GetWorldTimerManager().ClearTimer(CountdownTimerHandle);
+	GetWorldTimerManager().ClearTimer(ReturnToMenuTimerHandle);
+	Super::EndPlay(EndPlayReason);
+}
 
-	OnMatchStateChanged.Broadcast(CurrentState->GetStateName());
+// --- Phase ------------------------------------------------------------------------------------
+
+void AQuidProWizGameStateBase::SetMatchPhase(EMatchPhase NewPhase)
+{
+	if (!HasAuthority()) return;
+
+	MatchPhase = NewPhase;
+	OnRep_MatchPhase();
+}
+
+void AQuidProWizGameStateBase::OnRep_MatchPhase()
+{
+	OnMatchStateChanged.Broadcast(GetMatchStateName());
+
+	if (MatchPhase == EMatchPhase::MatchEnded)
+	{
+		OnMatchEnded.Broadcast(bTeamAWon, bTeamAWon ? TeamAScore : TeamBScore);
+	}
 }
 
 void AQuidProWizGameStateBase::StartCountdown()
 {
-	SetMatchState(MakeUnique<MatchStateWaitingToStart>());
+	SetMatchPhase(EMatchPhase::WaitingToStart);
 
 	CountdownSeconds = CountdownDuration;
-	OnCountdownUpdated.Broadcast(CountdownSeconds);
-	
+	OnRep_CountdownSeconds();
+
 	GetWorldTimerManager().ClearTimer(CountdownTimerHandle);
 	GetWorldTimerManager().SetTimer(CountdownTimerHandle, this,
 		&AQuidProWizGameStateBase::OnCountdownTick, 1.f, true);
@@ -43,110 +85,92 @@ void AQuidProWizGameStateBase::StartCountdown()
 
 void AQuidProWizGameStateBase::OnCountdownTick()
 {
-	CountdownSeconds--;
-	OnCountdownUpdated.Broadcast(CountdownSeconds);
-
-	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
-	{
-		APlayerController* PC = It->Get();
-		if (!PC || !PC->IsLocalController()) continue;
-
-		ABroom* Broom = Cast<ABroom>(PC->GetPawn());
-		if (!Broom) continue;
-
-		if (USoundManager* SM = Broom->GetSoundManager())
-		{
-			if (CountdownSeconds > 0)
-			{
-				SM->PlayCountdownBeep();
-			}
-			else
-			{
-				SM->PlayMatchStart();
-			}
-		}
-	}
+	CountdownSeconds = FMath::Max(CountdownSeconds - 1, 0);
+	OnRep_CountdownSeconds();
 
 	if (CountdownSeconds <= 0)
 	{
 		GetWorldTimerManager().ClearTimer(CountdownTimerHandle);
-		StartMatch();
+		SetMatchPhase(EMatchPhase::InProgress);
 	}
 }
 
-void AQuidProWizGameStateBase::StartMatch()
+void AQuidProWizGameStateBase::OnRep_CountdownSeconds()
 {
-	SetMatchState(MakeUnique<MatchStateInProgress>());
+	OnCountdownUpdated.Broadcast(CountdownSeconds);
+
+	// The initial value is announced silently; each tick after that beeps, and zero starts the match.
+	if (CountdownSeconds == CountdownDuration) return;
+
+	const int32 Seconds = CountdownSeconds;
+	ForEachLocalPlayerBroom([Seconds](ABroom& Broom)
+	{
+		if (USoundManager* Sound = Broom.GetSoundManager())
+		{
+			if (Seconds > 0)
+			{
+				Sound->PlayCountdownBeep();
+			}
+			else
+			{
+				Sound->PlayMatchStart();
+			}
+		}
+	});
 }
+
+// --- Scoring ----------------------------------------------------------------------------------
 
 void AQuidProWizGameStateBase::AddScore(AGoalRing* GoalRing, int32 Value)
 {
-	if (!GoalRing) return;
+	if (!HasAuthority() || !GoalRing || !CanScore()) return;
 
-	// Determine which team scored based on the goal ring's team
-	TriggerGoalScoredShakeForAllPlayers();
+	const bool bTeamA = GoalRing->GetOwningTeam() == EGoalTeam::TeamA;
+	int32& TeamScore = bTeamA ? TeamAScore : TeamBScore;
 
-	if(GoalRing->GetOwningTeam() == EGoalTeam::TeamA)
+	const int32 OldScore = TeamScore;
+	TeamScore += Value;
+	HandleScoreChanged(OldScore, TeamScore);
+
+	if (CheckWinCondition(TeamScore))
 	{
-		TeamAScore += Value;
-		OnScoreUpdated.Broadcast(TeamAScore, TeamBScore);
-		
-		if (CheckWinCondition(TeamAScore))
-		{
-			EndMatch(true);
-		}
-	}
-	else
-	{
-		TeamBScore += Value;
-		OnScoreUpdated.Broadcast(TeamAScore, TeamBScore);
-
-		if (CheckWinCondition(TeamBScore))
-		{
-			EndMatch(false);
-		}
+		EndMatch(bTeamA);
 	}
 }
 
-bool AQuidProWizGameStateBase::CheckWinCondition(int32 Score) const
+void AQuidProWizGameStateBase::OnRep_TeamAScore(int32 OldScore)
 {
-	return Score >= ScoreToWin;
+	HandleScoreChanged(OldScore, TeamAScore);
 }
 
-void AQuidProWizGameStateBase::TriggerGoalScoredShakeForAllPlayers()
+void AQuidProWizGameStateBase::OnRep_TeamBScore(int32 OldScore)
 {
-	for (FConstPlayerControllerIterator It = GetWorld()->GetPlayerControllerIterator(); It; ++It)
+	HandleScoreChanged(OldScore, TeamBScore);
+}
+
+void AQuidProWizGameStateBase::HandleScoreChanged(int32 OldScore, int32 NewScore)
+{
+	OnScoreUpdated.Broadcast(TeamAScore, TeamBScore);
+
+	// Feedback only for real goals, not for a late joiner receiving the current score.
+	if (NewScore <= OldScore || !HasActorBegunPlay()) return;
+
+	ForEachLocalPlayerBroom([](ABroom& Broom)
 	{
-		APlayerController* PC = It->Get();
-		if (!PC || !PC->IsLocalController()) continue;
-
-		APawn* Pawn = PC->GetPawn();
-		if (!Pawn) continue;
-
-		ABroom* Broom = Cast<ABroom>(Pawn);
-		if (!Broom) continue;
-
-		Broom->TriggerGoalScoredShake();
-
-		if (USoundManager* SM = Broom->GetSoundManager())
+		Broom.TriggerGoalScoredShake();
+		if (USoundManager* Sound = Broom.GetSoundManager())
 		{
-			SM->PlayGoalScored();
+			Sound->PlayGoalScored();
 		}
-	}
+	});
 }
 
-void AQuidProWizGameStateBase::EndMatch(bool bTeamAWon)
+// --- End of match -----------------------------------------------------------------------------
+
+void AQuidProWizGameStateBase::EndMatch(bool bTeamAWins)
 {
-	SetMatchState(MakeUnique<MatchStateMatchEnded>());
-
-	const int32 WinningScore = bTeamAWon ? TeamAScore : TeamBScore;
-	OnMatchEnded.Broadcast(bTeamAWon, WinningScore);
-
-	if (APlayerController* PlayerController = GetWorld()->GetFirstPlayerController())
-	{
-		PlayerController->SetIgnoreMoveInput(true);
-		PlayerController->SetIgnoreLookInput(true);
-	}
+	bTeamAWon = bTeamAWins;
+	SetMatchPhase(EMatchPhase::MatchEnded); // CanMove() is now false everywhere, so input stops.
 
 	GetWorldTimerManager().ClearTimer(ReturnToMenuTimerHandle);
 	GetWorldTimerManager().SetTimer(ReturnToMenuTimerHandle, this,
@@ -155,7 +179,37 @@ void AQuidProWizGameStateBase::EndMatch(bool bTeamAWon)
 
 void AQuidProWizGameStateBase::HandleReturnToMenu()
 {
-	SetMatchState(MakeUnique<MatchStateReturnToMenu>());
+	SetMatchPhase(EMatchPhase::ReturnToMenu);
 
-	UGameplayStatics::OpenLevel(GetWorld(),FName(*GetWorld()->GetName()));
+	UWorld* World = GetWorld();
+	if (!World) return;
+
+	if (World->GetNetMode() == NM_Standalone)
+	{
+		UGameplayStatics::OpenLevel(this, FName(*UGameplayStatics::GetCurrentLevelName(this)));
+	}
+	else
+	{
+		// Bring connected clients along to the restarted level.
+		World->ServerTravel(UWorld::RemovePIEPrefix(World->GetOutermost()->GetName()) + TEXT("?listen"));
+	}
+}
+
+// --- Helpers ----------------------------------------------------------------------------------
+
+void AQuidProWizGameStateBase::ForEachLocalPlayerBroom(TFunctionRef<void(ABroom&)> Func) const
+{
+	const UWorld* World = GetWorld();
+	if (!World) return;
+
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		const APlayerController* PC = It->Get();
+		if (!PC || !PC->IsLocalController()) continue;
+
+		if (ABroom* Broom = Cast<ABroom>(PC->GetPawn()))
+		{
+			Func(*Broom);
+		}
+	}
 }

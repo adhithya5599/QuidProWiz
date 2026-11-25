@@ -4,8 +4,7 @@
 #include "TestZone.h"
 #include "Components/BoxComponent.h"
 #include "Broom.h"
-
-FOnZoneEntered ATestZone::OnZoneEntered;
+#include "QuidditchWorldSubsystem.h"
 
 // Sets default values
 ATestZone::ATestZone()
@@ -29,7 +28,6 @@ void ATestZone::BeginPlay()
 	Super::BeginPlay();
 
 	ZoneVolume->OnComponentBeginOverlap.AddDynamic(this, &ATestZone::OnZoneVolumeBeginOverlap);
-	ZoneVolume->OnComponentEndOverlap.AddDynamic(this, &ATestZone::OnZoneVolumeEndOverlap);
 }
 
 void ATestZone::OnZoneVolumeBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, 
@@ -38,13 +36,9 @@ void ATestZone::OnZoneVolumeBeginOverlap(UPrimitiveComponent* OverlappedComponen
 {
 	ABroom* Broom = Cast<ABroom>(OtherActor);
 	if (!Broom) return;
-	
-	OnZoneEntered.Broadcast(ZoneType);
-}
 
-void ATestZone::OnZoneVolumeEndOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
-	UPrimitiveComponent* OtherComp, int32 OtherBodyIndex)
-{
-	ABroom* Broom = Cast<ABroom>(OtherActor);
-	if (!Broom) return;
+	if (UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
+	{
+		Subsystem->OnZoneEntered.Broadcast(Broom, ZoneType);
+	}
 }

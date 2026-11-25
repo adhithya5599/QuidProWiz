@@ -4,155 +4,145 @@
 
 #include "CoreMinimal.h"
 #include "BallBase.h"
-#include "DataAsset/QuaffleDataAsset.h"
-#include "NiagaraComponent.h"
-#include "NiagaraFunctionLibrary.h"
 #include "Quaffle.generated.h"
 
-class UStaticMeshComponent;
-class USphereComponent;
 class UProjectileMovementComponent;
-struct FTimerHandle;
+class UNiagaraComponent;
+class UQuaffleDataAsset;
 
-class QuaffleStateBase
+/** Replicated key for the Quaffle's state. */
+UENUM(BlueprintType)
+enum class EQuaffleState : uint8
+{
+	Free		UMETA(DisplayName = "Free"),
+	Possessed	UMETA(DisplayName = "Possessed"),
+	Thrown		UMETA(DisplayName = "Thrown")
+};
+
+/**
+ * State pattern: each state answers what the Quaffle may do. States are stateless, so a single
+ * shared instance per state is used (flyweight) and the replicated EQuaffleState selects it.
+ * Add a state (Pass, Steal...) by adding an enum value and a class here.
+ */
+class FQuaffleStateBase
 {
 public:
-	virtual ~QuaffleStateBase() = default;
+	virtual ~FQuaffleStateBase() = default;
 
 	virtual bool CanPickUp() const { return false; }
 	virtual bool CanThrow() const { return false; }
 	virtual bool CanScore() const { return false; }
+	virtual const TCHAR* GetName() const = 0;
+
+	static const FQuaffleStateBase& Get(EQuaffleState State);
 };
 
-class QuaffleStateFree : public QuaffleStateBase
+class FQuaffleStateFree : public FQuaffleStateBase
 {
 public:
 	virtual bool CanPickUp() const override { return true; }
+	virtual const TCHAR* GetName() const override { return TEXT("Free"); }
 };
 
-class QuaffleStatePossessed : public QuaffleStateBase
+class FQuaffleStatePossessed : public FQuaffleStateBase
 {
 public:
 	virtual bool CanThrow() const override { return true; }
+	virtual const TCHAR* GetName() const override { return TEXT("Possessed"); }
 };
 
-class QuaffleStateThrown : public QuaffleStateBase
+class FQuaffleStateThrown : public FQuaffleStateBase
 {
 public:
 	virtual bool CanScore() const override { return true; }
+	virtual const TCHAR* GetName() const override { return TEXT("Thrown"); }
 };
 
-class QuaffleStateScored : public QuaffleStateBase
-{
-public:
-
-};
-
+/**
+ * The scoring ball. Server-authoritative: only the server changes state, attaches, throws or
+ * resets it. Movement and attachment replicate; clients react to state changes in OnRep.
+ */
 UCLASS()
 class QUIDPROWIZ_API AQuaffle : public ABallBase
 {
 	GENERATED_BODY()
-	
-public:	
-	// Sets default values for this actor's properties
+
+public:
+
 	AQuaffle();
 
-protected:
-	// Called when the game starts or when spawned
-	virtual void BeginPlay() override;
+	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
-public:	
-	// Called every frame
-	virtual void Tick(float DeltaTime) override;
+	bool CanBePickedUpBy(const AActor* PlayerActor) const;
+	bool IsInPickupRange(const AActor* PlayerActor) const;
 
-	bool CanBePickedUpBy(AActor* PlayerActor) const;
-	bool IsInPickupRange(AActor* PlayerActor) const;
-	void PickUp(AActor* PlayerActor);
+	bool CanBePickedUp() const { return GetState().CanPickUp(); }
+	bool CanBeThrown() const { return GetState().CanThrow(); }
+	bool CanScore() const { return GetState().CanScore(); }
 
-	bool CanBePickedUp() const { return CurrentState->CanPickUp(); }
-	bool CanBeThrown() const { return CurrentState->CanThrow(); }
-	bool CanScore() const { return CurrentState->CanScore(); }
-
-	FVector GetPreviousLocation() const { return PreviousLocation; }
+	EQuaffleState GetQuaffleState() const { return QuaffleState; }
+	AActor* GetPossessingPlayer() const { return PossessingPlayer; }
 	FVector GetLastThrownLocation() const { return LastThrownStartLocation; }
-
-	void NotifyScored();
-
-	bool ThrowToTarget(const FVector& TargetLocation, float ArcBias = 1.f);
+	float GetPickupRadius() const;
 
 	UFUNCTION(BlueprintPure, Category = "Quaffle | State")
-	FString GetCurrentStateName() const
-	{
-		if (CurrentState->CanPickUp()) return TEXT("Free");
-		if (CurrentState->CanThrow()) return TEXT("Possessed");
-		if (CurrentState->CanScore()) return TEXT("Thrown");
-		return TEXT("Scored");
-	}
+	FString GetCurrentStateName() const { return GetState().GetName(); }
 
-	float GetPickupRadius() const
-	{
-		return QuaffleData ? QuaffleData->PickupRadius : 200.f;
-	}
+	/** Server: attach to the player's rider socket. */
+	void PickUp(AActor* PlayerActor);
 
+	/** Server: detach in place and become free (e.g. the holder was hit). */
 	void Drop(AActor* DropActor);
 
+	/** Server: solve a ballistic arc to TargetLocation and launch. ArcBias scales flight time. */
+	bool ThrowToTarget(const FVector& TargetLocation, float ArcBias = 1.f);
+
+	/** Server: called by a goal ring when this Quaffle scores. */
+	void NotifyScored();
+
 protected:
+
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Quaffle | Components")
-	UProjectileMovementComponent* ProjectileMovement;
-
-	UPROPERTY()
-	AActor* PossessingPlayer = nullptr;
-
-protected:
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Quaffle | Data")
-	UQuaffleDataAsset* QuaffleData;
-
-	bool LaunchWithVelocity(const FVector& LaunchVelocity, AActor* PreviousHolder);
-
-private:
-
-	FTransform InitialSpawnTransform;
-
-	//FTimerHandle ThrowRecoveryTimerHandle;
-
-	UPROPERTY()
-	AActor* LastThrower = nullptr;
-
-	FVector PreviousLocation = FVector::ZeroVector;
-	FVector CurrentLocationCached = FVector::ZeroVector;
-	FVector LastThrownStartLocation = FVector::ZeroVector;
-
-	TUniquePtr<QuaffleStateBase> CurrentState;
-	void SetState(TUniquePtr<QuaffleStateBase> NewState) { CurrentState = MoveTemp(NewState); }
-
-	FVector ComputeThrowStartLocation(AActor* Holder) const;
-
-private:
-	
-	float TimeSinceLastPositionBroadcast = 0.f;
-
-	UPROPERTY(EditAnywhere, Category = "Quaffle | Network")
-	float PositionBroadcastInterval = 0.016f; // ~60 broadcasts per second
-	
-	FTimerHandle MissRespawnTimerHandle;
-
-	UPROPERTY(EditAnywhere, Category = "Quaffle | Gameplay")
-	float MissRespawnDelay = 3.f;
-
-	void OnMissRespawn();
-
-protected:
+	TObjectPtr<UProjectileMovementComponent> ProjectileMovement;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Quaffle | Effects")
-	UNiagaraComponent* TrailEffect = nullptr;
+	TObjectPtr<UNiagaraComponent> TrailEffect = nullptr;
 
-	UPROPERTY(EditDefaultsOnly, Category = "Quaffle | Effects")
-	UNiagaraSystem* ThrowTrailSystem = nullptr;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Quaffle | Data")
+	TObjectPtr<UQuaffleDataAsset> QuaffleData;
 
 private:
 
-	void ActivateTrail();
-	void DeactivateTrail();
+	UPROPERTY(ReplicatedUsing = OnRep_QuaffleState)
+	EQuaffleState QuaffleState = EQuaffleState::Free;
+
+	UPROPERTY(Replicated)
+	TObjectPtr<AActor> PossessingPlayer = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<AActor> LastThrower = nullptr;
+
+	FVector LastThrownStartLocation = FVector::ZeroVector;
+	FTransform InitialSpawnTransform;
+	FTimerHandle MissRespawnTimerHandle;
+
+	const FQuaffleStateBase& GetState() const { return FQuaffleStateBase::Get(QuaffleState); }
+
+	/** Server: change state and apply its local side effects. */
+	void SetQuaffleState(EQuaffleState NewState);
+
+	UFUNCTION()
+	void OnRep_QuaffleState();
+
+	/** Collision, trail and physics setup that every machine applies for the current state. */
+	void ApplyStateEffects();
+
+	FVector ComputeThrowStartLocation(const AActor* Holder) const;
+	bool LaunchWithVelocity(const FVector& LaunchVelocity, AActor* PreviousHolder, const FVector& StartLocation);
+	void StopProjectile();
+	void ResetToSpawn();
+	void OnMissRespawn();
 };

@@ -4,6 +4,7 @@
 #include "GameFramework/Pawn.h"
 #include "Camera/CameraComponent.h"
 #include "Broom.h"
+#include "QuidditchWorldSubsystem.h"
 
 UGoalTargetingComponent::UGoalTargetingComponent()
 {
@@ -15,9 +16,11 @@ void UGoalTargetingComponent::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// Aim assist is purely local; TickComponent also skips brooms that aren't locally controlled.
+	// (Possession can happen after BeginPlay, so local control can't be decided here.)
 	if (!TargetingDataAsset)
 	{
-		PrimaryComponentTick.bCanEverTick = false;
+		SetComponentTickEnabled(false);
 		return;
 	}
 
@@ -51,7 +54,7 @@ bool UGoalTargetingComponent::IsLocallyControlled() const
 bool UGoalTargetingComponent::IsGoalValidTarget(const AGoalRing* Goal, const FVector& CameraLocation, 
 	const FVector& CameraForward) const
 {
-	if (!Goal || !Goal->IsGoalEnabled()) return false;
+	if (!Goal || !Goal->IsGoalEnabled() || !TargetingDataAsset) return false;
 
 	const FVector ToCamera = (CameraLocation - Goal->GetActorLocation()).GetSafeNormal();
 	const float GoalFacingDot = FVector::DotProduct(ToCamera, Goal->GetActorForwardVector());
@@ -71,12 +74,13 @@ bool UGoalTargetingComponent::IsGoalValidTarget(const AGoalRing* Goal, const FVe
 float UGoalTargetingComponent::ScoreTargetGoal(const AGoalRing* Goal, const FVector& CameraLocation, 
 	const FVector& CameraForward) const
 {
+	if (!Goal || !TargetingDataAsset) return TNumericLimits<float>::Max();
+
 	const float Distance = FVector::Dist(CameraLocation, Goal->GetAimDirection());
 	const FVector ToGoalDirection = (Goal->GetAimDirection() - CameraLocation).GetSafeNormal();
 	const float Dot = FVector::DotProduct(CameraForward, ToGoalDirection);
 	const float AngleDeg = FMath::RadiansToDegrees(FMath::Acos(FMath::Clamp(Dot, -1.f, 1.f)));
 
-	if (!TargetingDataAsset) return TNumericLimits<float>::Max();
 	return (Distance * TargetingDataAsset->DistanceWeight) + (AngleDeg * TargetingDataAsset->AngleWeight);
 }
 
@@ -94,9 +98,11 @@ AGoalRing* UGoalTargetingComponent::FindBestGoalTarget() const
 	AGoalRing* BestGoal = nullptr;
 	float BestScore = TNumericLimits<float>::Max();
 
-	for (const TWeakObjectPtr<AGoalRing>& GoalPtr : AGoalRing::GetRegisteredGoals())
+	const UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this);
+	if (!Subsystem) return nullptr;
+
+	for (AGoalRing* Goal : Subsystem->GetGoals())
 	{
-		AGoalRing* Goal = GoalPtr.Get();
 		if (!IsGoalValidTarget(Goal, CameraLocation, CameraForward)) continue;
 
 		const float Score = ScoreTargetGoal(Goal, CameraLocation, CameraForward);

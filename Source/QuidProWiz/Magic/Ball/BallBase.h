@@ -21,8 +21,8 @@ public:
 protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Ball | Components")
-	USphereComponent* CollisionComponent;
+	TObjectPtr<USphereComponent> CollisionComponent;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Ball | Components")
-	UStaticMeshComponent* BallMesh;
+	TObjectPtr<UStaticMeshComponent> BallMesh;
 };

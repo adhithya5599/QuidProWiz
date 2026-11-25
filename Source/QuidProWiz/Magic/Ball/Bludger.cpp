@@ -1,13 +1,13 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "Bludger.h"
 #include "DataAsset/BludgerDataAsset.h"
+#include "QuidditchWorldSubsystem.h"
 #include "Broom.h"
-#include "Quaffle.h"
 #include "GoalRing.h"
 #include "Components/SphereComponent.h"
-#include "Kismet/GameplayStatics.h"
+#include "DrawDebugHelpers.h"
+#include "NiagaraFunctionLibrary.h"
 #include "TimerManager.h"
 
 ABludger::ABludger()
@@ -21,17 +21,36 @@ void ABludger::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (!BludgerDataAsset) return;
+	if (UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
+	{
+		Subsystem->RegisterBludger(this);
+	}
 
-	AActor* FoundActor = UGameplayStatics::GetActorOfClass(GetWorld(), AQuaffle::StaticClass());
-	QuaffleRef = Cast<AQuaffle>(FoundActor);
+	// Clients only display the replicated Bludger.
+	if (!HasAuthority() || !BludgerDataAsset)
+	{
+		SetActorTickEnabled(false);
+		return;
+	}
 
 	CollisionComponent->OnComponentBeginOverlap.AddDynamic(this, &ABludger::OnOverlapBegin);
 
-	GetWorldTimerManager().SetTimer(SearchTimerHandle, this, &ABludger::SerchForTarget,
+	GetWorldTimerManager().SetTimer(SearchTimerHandle, this, &ABludger::SearchForTarget,
 		BludgerDataAsset->SearchInterval, true);
 
 	PickNewWanderTarget();
+}
+
+void ABludger::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
+	{
+		Subsystem->UnregisterBludger(this);
+	}
+
+	GetWorldTimerManager().ClearTimer(SearchTimerHandle);
+	GetWorldTimerManager().ClearTimer(HitCooldownTimerHandle);
+	Super::EndPlay(EndPlayReason);
 }
 
 void ABludger::Tick(float DeltaTime)
@@ -48,18 +67,18 @@ void ABludger::Tick(float DeltaTime)
 	}
 }
 
-void ABludger::OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp, 
+void ABludger::OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp,
 	int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
 	if (!bCanHit) return;
 
-	ABroom* HitBroom = Cast<ABroom>(OtherActor);
-	if (!HitBroom) return;
-
-	OnHitBroom(HitBroom);
+	if (ABroom* HitBroom = Cast<ABroom>(OtherActor))
+	{
+		OnHitBroom(HitBroom);
+	}
 }
 
-void ABludger::SerchForTarget()
+void ABludger::SearchForTarget()
 {
 	if (!BludgerDataAsset) return;
 
@@ -70,21 +89,15 @@ void ABludger::SerchForTarget()
 		bTargetLocked = false;
 	}
 
-	TArray<AActor*> FoundBrooms;
-	UGameplayStatics::GetAllActorsOfClass(GetWorld(), ABroom::StaticClass(), FoundBrooms);
+	const UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this);
+	if (!Subsystem) return;
 
 	ABroom* BestTarget = nullptr;
 	float BestScore = -1.f;
 
-	for (AActor* Actor : FoundBrooms)
+	for (ABroom* Broom : Subsystem->GetBrooms())
 	{
-		ABroom* Broom = Cast<ABroom>(Actor);
-		if (!Broom) return;
-
-		if (!Broom->IsHoldingQuaffle()) continue;
-
 		const float Score = ScoreTarget(Broom);
-
 		if (Score > BestScore)
 		{
 			BestScore = Score;
@@ -104,229 +117,173 @@ void ABludger::SerchForTarget()
 	}
 }
 
-void ABludger::ChaseTarget(float DeltaTime)
-{
-	if (!IsTargetValid()) return;
-	if (!BludgerDataAsset) return;
-
-	const FVector SeekForce = ComputeSeekForce(TargetBroom->GetActorLocation());
-	const FVector AvoidanceForce = ComputeAvoidanceForce();
-
-	const FVector DesiredVelocity = SeekForce + AvoidanceForce;
-
-	CurrentVelocity = FMath::VInterpTo(CurrentVelocity, DesiredVelocity, DeltaTime,
-		SteeringInterpSpeed);
-
-	const float DistanceToTarget = FVector::Dist(GetActorLocation(), TargetBroom->GetActorLocation());
-	const float SpeedFactor = DistanceToTarget <= BludgerDataAsset->BoostActiveDistance ?
-		BludgerDataAsset->BoostSpeedMultiplier : 1.f;
-
-	const float MaxSpeed = BludgerDataAsset->ChaseSpeed * SpeedFactor;
-	if (CurrentVelocity.SizeSquared() > MaxSpeed * MaxSpeed)
-	{
-		CurrentVelocity = CurrentVelocity.GetSafeNormal() * MaxSpeed;
-	}
-
-	FHitResult Hit;
-	SetActorLocation(GetActorLocation() + CurrentVelocity * DeltaTime, true, &Hit);
-
-	if (Hit.IsValidBlockingHit())
-	{
-		CurrentVelocity = FVector::VectorPlaneProject(CurrentVelocity, Hit.Normal) * 0.8f;
-	}
-
-	if (!CurrentVelocity.IsNearlyZero())
-	{
-		const FRotator TargetRotation = CurrentVelocity.GetSafeNormal().Rotation();
-		const FRotator NewRotation = FMath::RInterpTo(GetActorRotation(), TargetRotation, DeltaTime,
-			BludgerDataAsset->RotationInterpSpeed);
-		SetActorRotation(NewRotation);
-	}
-}
-
 bool ABludger::IsTargetValid() const
 {
 	return IsValid(TargetBroom) && TargetBroom->IsHoldingQuaffle();
 }
 
-void ABludger::PickNewWanderTarget()
+float ABludger::ScoreTarget(const ABroom* Broom) const
 {
-	if (!BludgerDataAsset) return;
+	if (!Broom || !BludgerDataAsset || !Broom->IsHoldingQuaffle()) return -1.f;
 
-	const FVector RandomOffset = FVector(FMath::RandRange(-BludgerDataAsset->WanderRadius, BludgerDataAsset->WanderRadius),
-		FMath::RandRange(-BludgerDataAsset->WanderRadius, BludgerDataAsset->WanderRadius), 
-		FMath::RandRange(-BludgerDataAsset->WanderRadius * 0.5f, BludgerDataAsset->WanderRadius * 0.5f));
+	float Score = 10.f;
 
-	WanderTarget = GetActorLocation() + RandomOffset;
+	// IsPlayerControlled works on the server for remote players; IsLocallyControlled didn't.
+	if (Broom->IsPlayerControlled())
+	{
+		Score += BludgerDataAsset->HumanPlayerPriority * 10.f;
+	}
+
+	if (const UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
+	{
+		float ClosestGoalDistance = TNumericLimits<float>::Max();
+		for (const AGoalRing* Goal : Subsystem->GetGoals())
+		{
+			ClosestGoalDistance = FMath::Min(ClosestGoalDistance,
+				FVector::Dist(Broom->GetActorLocation(), Goal->GetActorLocation()));
+		}
+
+		if (ClosestGoalDistance < TNumericLimits<float>::Max() && BludgerDataAsset->GoalThreatDistance > 0.f)
+		{
+			const float GoalThreat = FMath::Clamp(1.f - ClosestGoalDistance / BludgerDataAsset->GoalThreatDistance, 0.f, 1.f);
+			Score += GoalThreat * BludgerDataAsset->GoalProximityWeight * 10.f;
+		}
+	}
+
+	Score -= FVector::Dist(GetActorLocation(), Broom->GetActorLocation()) * 0.001f;
+	return Score;
+}
+
+bool ABludger::ShouldSwitchTarget(const ABroom* NewTarget) const
+{
+	if (!NewTarget) return false;
+	if (!IsTargetValid()) return true;
+	if (NewTarget == TargetBroom) return false;
+
+	return ScoreTarget(NewTarget) > ScoreTarget(TargetBroom) + BludgerDataAsset->TargetSwitchThreshold * 0.01f;
+}
+
+void ABludger::ChaseTarget(float DeltaTime)
+{
+	if (!IsTargetValid() || !BludgerDataAsset) return;
+
+	const FVector DesiredVelocity = ComputeSeekForce(TargetBroom->GetActorLocation()) + ComputeAvoidanceForce();
+	CurrentVelocity = FMath::VInterpTo(CurrentVelocity, DesiredVelocity, DeltaTime,
+		BludgerDataAsset->ChaseSteeringInterpSpeed);
+
+	const float DistanceToTarget = FVector::Dist(GetActorLocation(), TargetBroom->GetActorLocation());
+	const float SpeedFactor = DistanceToTarget <= BludgerDataAsset->BoostActiveDistance
+		? BludgerDataAsset->BoostSpeedMultiplier : 1.f;
+
+	CurrentVelocity = CurrentVelocity.GetClampedToMaxSize(BludgerDataAsset->ChaseSpeed * SpeedFactor);
+
+	MoveWithVelocity(DeltaTime, false);
 }
 
 void ABludger::ChaseWanderTarget(float DeltaTime)
 {
 	if (!BludgerDataAsset) return;
 
-	const FVector CurrentLocation = GetActorLocation();
-	const float DistToWander = FVector::Dist(CurrentLocation, WanderTarget);
-
-	if (DistToWander < 100.f)
+	if (FVector::Dist(GetActorLocation(), WanderTarget) < BludgerDataAsset->WanderArrivalRadius)
 	{
 		PickNewWanderTarget();
 		return;
 	}
 
-	const FVector WanderForce = ComputeWanderForce();
-	const FVector AvoidanceForce = ComputeAvoidanceForce();
-	const FVector DesiredVelocity = WanderForce + AvoidanceForce;
+	const FVector DesiredVelocity = ComputeWanderForce() + ComputeAvoidanceForce();
+	CurrentVelocity = FMath::VInterpTo(CurrentVelocity, DesiredVelocity, DeltaTime,
+		BludgerDataAsset->WanderSteeringInterpSpeed);
 
-	CurrentVelocity = FMath::VInterpTo(CurrentVelocity, DesiredVelocity, DeltaTime, 2.f);
+	MoveWithVelocity(DeltaTime, true);
+}
 
+void ABludger::MoveWithVelocity(float DeltaTime, bool bRepickWanderOnHit)
+{
 	FHitResult Hit;
-	SetActorLocation(CurrentLocation + CurrentVelocity * DeltaTime, true, &Hit);
+	SetActorLocation(GetActorLocation() + CurrentVelocity * DeltaTime, true, &Hit);
 
 	if (Hit.IsValidBlockingHit())
 	{
 		CurrentVelocity = FVector::VectorPlaneProject(CurrentVelocity, Hit.Normal) * 0.8f;
-		PickNewWanderTarget();
+		if (bRepickWanderOnHit)
+		{
+			PickNewWanderTarget();
+		}
 	}
 
 	if (!CurrentVelocity.IsNearlyZero())
 	{
-		const FRotator TargetRotation = CurrentVelocity.GetSafeNormal().Rotation();
-		const FRotator NewRotation = FMath::RInterpTo(GetActorRotation(), TargetRotation, DeltaTime,
+		const FRotator NewRotation = FMath::RInterpTo(GetActorRotation(), CurrentVelocity.Rotation(), DeltaTime,
 			BludgerDataAsset->RotationInterpSpeed);
 		SetActorRotation(NewRotation);
 	}
 }
 
-void ABludger::ResetToRandomLocation()
+void ABludger::PickNewWanderTarget()
 {
-	const FVector CurrentLocation = GetActorLocation();
+	if (!BludgerDataAsset) return;
 
-	const FVector RandomOffset = FVector(FMath::RandRange(-ResetRadius, ResetRadius),
-		FMath::RandRange(-ResetRadius, ResetRadius), 
-		FMath::RandRange(ResetHeight * 0.5f, ResetHeight));
+	const float Radius = BludgerDataAsset->WanderRadius;
+	const FVector RandomOffset(FMath::RandRange(-Radius, Radius), FMath::RandRange(-Radius, Radius),
+		FMath::RandRange(-Radius * 0.5f, Radius * 0.5f));
 
-	const FVector NewLocation = CurrentLocation + RandomOffset;
-	SetActorLocation(NewLocation);
-
-	CurrentVelocity = FVector::ZeroVector;
-	PickNewWanderTarget();
-}
-
-float ABludger::ScoreTarget(ABroom* Broom) const
-{
-	if (!Broom || !BludgerDataAsset) return -1.f;
-
-	float Score = 0.f;
-
-	if (!Broom->IsHoldingQuaffle()) return -1.f;
-	Score += 10.f;
-
-	if (Broom->IsLocallyControlled())
-	{
-		Score += BludgerDataAsset->HumanPlayerPriority * 10.f;
-	}
-
-	float ClosestGoalDistance = TNumericLimits<float>::Max();
-	for (const TWeakObjectPtr<AGoalRing>& GoalPtr : AGoalRing::GetRegisteredGoals())
-	{
-		AGoalRing* Goal = GoalPtr.Get();
-		if (!Goal) continue;
-
-		const float Distance = FVector::Dist(Broom->GetActorLocation(), Goal->GetActorLocation());
-
-		if (Distance < ClosestGoalDistance)
-		{
-			ClosestGoalDistance = Distance;
-		}
-	}
-
-	if (ClosestGoalDistance < TNumericLimits<float>::Max())
-	{
-		const float GoalThreat = FMath::Clamp(1.f - (ClosestGoalDistance / 5000.f), 0.f, 1.f);
-		Score += GoalThreat * BludgerDataAsset->GoalProximityWeight * 10.f;
-	}
-
-	const float DistanceToBroom = FVector::Dist(GetActorLocation(), Broom->GetActorLocation());
-	Score -= DistanceToBroom * 0.001f;
-
-	return Score;
-}
-
-bool ABludger::ShouldSwitchTarget(ABroom* NewTarget) const
-{
-	if (!NewTarget) return false;
-
-	if (!IsTargetValid()) return true;
-
-	if (NewTarget == TargetBroom) return false;
-
-	const float CurrentScore = ScoreTarget(TargetBroom);
-	const float NewScore = ScoreTarget(NewTarget);
-
-	return NewScore > CurrentScore + BludgerDataAsset->TargetSwitchThreshold * 0.01f;
+	WanderTarget = GetActorLocation() + RandomOffset;
 }
 
 FVector ABludger::ComputeAvoidanceForce() const
 {
 	if (!BludgerDataAsset) return FVector::ZeroVector;
 
-	FVector AvoidanceForce = FVector::ZeroVector;
-	const FVector Forward = GetActorForwardVector();
+	const UBludgerDataAsset& Data = *BludgerDataAsset;
+	UWorld* World = GetWorld();
 	const FVector Location = GetActorLocation();
+	const FCollisionShape Probe = FCollisionShape::MakeSphere(Data.AvoidanceSphereRadius);
+	const float AvoidScale = Data.ObstacleAvoidanceStrength * Data.ChaseSpeed;
 
-	const int32 NumRays = BludgerDataAsset->NumAvoidanceRays;
-	const float AngleStep = 60.f / FMath::Max(NumRays - 1, 1);
-	const float StartAngle = -30.f;
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(BludgerAvoidance), false, this);
+	FVector AvoidanceForce = FVector::ZeroVector;
 
-	for (int32 i = 0; i < NumRays; ++i)
+	// Floor and ceiling: probed once (they used to be re-probed and re-added for every forward ray).
+	const float VerticalRange = Data.ObstacleDetectionRange * 0.5f;
+	for (const FVector& Direction : { FVector::DownVector, FVector::UpVector })
 	{
-		const float Angle = StartAngle + (AngleStep * i);
-		const FVector RayDirection = Forward.RotateAngleAxis(Angle, FVector::UpVector);
-		const FVector RayEnd = Location + RayDirection * BludgerDataAsset->ObstacleDetectionRange;
+		FHitResult Hit;
+		if (World->SweepSingleByChannel(Hit, Location, Location + Direction * VerticalRange, FQuat::Identity,
+			ECC_WorldStatic, Probe, Params))
+		{
+			AvoidanceForce -= Direction * (1.f - Hit.Distance / VerticalRange) * AvoidScale;
+		}
+	}
+
+	// Forward fan, ignoring the target so the Bludger doesn't swerve away from its prey.
+	if (TargetBroom)
+	{
+		Params.AddIgnoredActor(TargetBroom);
+	}
+
+	const FVector Forward = GetActorForwardVector();
+	const int32 NumRays = FMath::Max(Data.NumAvoidanceRays, 1);
+	const float AngleStep = NumRays > 1 ? Data.AvoidanceArcDegrees / (NumRays - 1) : 0.f;
+	const float StartAngle = NumRays > 1 ? -Data.AvoidanceArcDegrees * 0.5f : 0.f;
+
+	for (int32 RayIndex = 0; RayIndex < NumRays; ++RayIndex)
+	{
+		const FVector RayDirection = Forward.RotateAngleAxis(StartAngle + AngleStep * RayIndex, FVector::UpVector);
+		const FVector RayEnd = Location + RayDirection * Data.ObstacleDetectionRange;
 
 		FHitResult Hit;
-		FCollisionQueryParams Params;
-		Params.AddIgnoredActor(this);
+		const bool bHit = World->SweepSingleByChannel(Hit, Location, RayEnd, FQuat::Identity, ECC_WorldStatic,
+			Probe, Params);
 
-		FHitResult DownHit;
-		const bool bHitFloor = GetWorld()->SweepSingleByChannel(DownHit, Location,
-			Location + FVector::DownVector * BludgerDataAsset->ObstacleDetectionRange * 0.5f, FQuat::Identity,
-			ECC_WorldStatic, FCollisionShape::MakeSphere(BludgerDataAsset->AvoidanceSphereRadius), Params);
-		
-		if (bHitFloor)
-		{
-			const float HitWeight = 1.f - (DownHit.Distance / (BludgerDataAsset->ObstacleDetectionRange * 0.5f));
-			AvoidanceForce += FVector::UpVector * HitWeight * 
-				BludgerDataAsset->ObstacleAvoidanceStrength * BludgerDataAsset->ChaseSpeed;
-		}
-
-		FHitResult UpHit;
-		const bool bHitCeiling = GetWorld()->SweepSingleByChannel(UpHit, Location,
-			Location + FVector::UpVector * BludgerDataAsset->ObstacleDetectionRange * 0.5f, FQuat::Identity,
-			ECC_WorldStatic, FCollisionShape::MakeSphere(BludgerDataAsset->AvoidanceSphereRadius), Params);
-		
-		if (bHitCeiling)
-		{
-			const float HitWeight = 1.f - (UpHit.Distance / (BludgerDataAsset->ObstacleDetectionRange * 0.5f));
-			AvoidanceForce += FVector::DownVector * HitWeight * BludgerDataAsset->ObstacleAvoidanceStrength
-				* BludgerDataAsset->ChaseSpeed;
-		}
-
-		if (TargetBroom) Params.AddIgnoredActor(TargetBroom);
-
-		const bool bHit = GetWorld()->SweepSingleByChannel(Hit, Location, RayEnd, FQuat::Identity, ECC_WorldStatic,
-			FCollisionShape::MakeSphere(BludgerDataAsset->AvoidanceSphereRadius), Params);
-		
 		if (bHit)
 		{
-			const float HitWeight = 1.f - (Hit.Distance / BludgerDataAsset->ObstacleDetectionRange);
-			AvoidanceForce += Hit.Normal * HitWeight * BludgerDataAsset->ObstacleAvoidanceStrength * BludgerDataAsset->ChaseSpeed;
-
-			DrawDebugLine(GetWorld(), Location, Hit.ImpactPoint, FColor::Red, false, -1.f, 0, 1.f);
+			AvoidanceForce += Hit.Normal * (1.f - Hit.Distance / Data.ObstacleDetectionRange) * AvoidScale;
 		}
-		else
+
+		if (Data.bDrawDebug)
 		{
-			DrawDebugLine(GetWorld(), Location, RayEnd, FColor::Green, false, -1.f, 0, 1.f);
+			DrawDebugLine(World, Location, bHit ? Hit.ImpactPoint : RayEnd, bHit ? FColor::Red : FColor::Green,
+				false, -1.f, 0, 1.f);
 		}
 	}
 
@@ -336,25 +293,19 @@ FVector ABludger::ComputeAvoidanceForce() const
 FVector ABludger::ComputeSeekForce(const FVector& TargetLocation) const
 {
 	if (!BludgerDataAsset) return FVector::ZeroVector;
-
-	const FVector ToTarget = (TargetLocation - GetActorLocation()).GetSafeNormal();
-	return ToTarget * BludgerDataAsset->ChaseSpeed;
+	return (TargetLocation - GetActorLocation()).GetSafeNormal() * BludgerDataAsset->ChaseSpeed;
 }
 
 FVector ABludger::ComputeWanderForce() const
 {
 	if (!BludgerDataAsset) return FVector::ZeroVector;
-
-	const FVector ToWander = (WanderTarget - GetActorLocation()).GetSafeNormal();
-	return ToWander * BludgerDataAsset->WanderSpeed;
+	return (WanderTarget - GetActorLocation()).GetSafeNormal() * BludgerDataAsset->WanderSpeed;
 }
 
 void ABludger::OnHitBroom(ABroom* HitBroom)
 {
-	if (!HitBroom) return;
+	if (!HasAuthority() || !HitBroom || !bCanHit || !BludgerDataAsset) return;
 	if (!HitBroom->IsHoldingQuaffle()) return;
-	if(!bCanHit) return;
-	if (!BludgerDataAsset) return;
 
 	bCanHit = false;
 
@@ -362,16 +313,32 @@ void ABludger::OnHitBroom(ABroom* HitBroom)
 	HitBroom->TriggerRagdoll(ImpulseDirection, BludgerDataAsset->RagDollImpulseStrength,
 		BludgerDataAsset->RagDollDuration, BludgerDataAsset->RespawnDelay);
 
+	MulticastPlayHitEffect(GetActorLocation());
 	ResetToRandomLocation();
 
-	CurrentVelocity = FVector::ZeroVector;
-
 	GetWorldTimerManager().ClearTimer(HitCooldownTimerHandle);
-	GetWorldTimerManager().SetTimer(HitCooldownTimerHandle, this, &ABludger::ResetHitCoolDown,
+	GetWorldTimerManager().SetTimer(HitCooldownTimerHandle, this, &ABludger::ResetHitCooldown,
 		BludgerDataAsset->HitCooldown, false);
 }
 
-void ABludger::ResetHitCoolDown()
+void ABludger::MulticastPlayHitEffect_Implementation(FVector_NetQuantize Location)
 {
-	bCanHit = true;
+	if (BludgerDataAsset && BludgerDataAsset->HitEffect)
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, BludgerDataAsset->HitEffect, Location);
+	}
+}
+
+void ABludger::ResetToRandomLocation()
+{
+	if (!BludgerDataAsset) return;
+
+	const float Radius = BludgerDataAsset->ResetRadius;
+	const float Height = BludgerDataAsset->ResetHeight;
+	const FVector RandomOffset(FMath::RandRange(-Radius, Radius), FMath::RandRange(-Radius, Radius),
+		FMath::RandRange(Height * 0.5f, Height));
+
+	SetActorLocation(GetActorLocation() + RandomOffset);
+	CurrentVelocity = FVector::ZeroVector;
+	PickNewWanderTarget();
 }

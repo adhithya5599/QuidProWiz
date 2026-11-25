@@ -17,41 +17,41 @@ class QUIDPROWIZ_API USoundDataAsset : public UDataAsset
 public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sounds | Broom")
-	USoundBase* BroomFlyingLoop = nullptr;
+	TObjectPtr<USoundBase> BroomFlyingLoop = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sounds | Broom")
-	USoundBase* BroomSpeedBoost = nullptr;
+	TObjectPtr<USoundBase> BroomSpeedBoost = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sounds | Broom")
-	USoundBase* BroomHitByBludger = nullptr;
+	TObjectPtr<USoundBase> BroomHitByBludger = nullptr;
 	
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sounds | Quaffle")
-	USoundBase* QuafflePickup = nullptr;
+	TObjectPtr<USoundBase> QuafflePickup = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sounds | Quaffle")
-	USoundBase* QuaffleThrow = nullptr;
+	TObjectPtr<USoundBase> QuaffleThrow = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sounds | Quaffle")
-	USoundBase* QuaffleScore = nullptr;
+	TObjectPtr<USoundBase> QuaffleScore = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sounds | Bludger")
-	USoundBase* BludgerChase = nullptr;
+	TObjectPtr<USoundBase> BludgerChase = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sounds | Bludger")
-	USoundBase* BludgerHit = nullptr;
+	TObjectPtr<USoundBase> BludgerHit = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sounds | UI")
-	USoundBase* CountDownBeep = nullptr;
+	TObjectPtr<USoundBase> CountDownBeep = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sounds | UI")
-	USoundBase* MatchStart = nullptr;
+	TObjectPtr<USoundBase> MatchStart = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sounds | UI")
-	USoundBase* GoalScored = nullptr;
+	TObjectPtr<USoundBase> GoalScored = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sounds | UI")
-	USoundBase* MatchWon = nullptr;
+	TObjectPtr<USoundBase> MatchWon = nullptr;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sounds | UI")
-	USoundBase* MatchLost = nullptr;
+	TObjectPtr<USoundBase> MatchLost = nullptr;
 };

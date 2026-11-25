@@ -2,7 +2,8 @@
 
 
 #include "ZoneUIManager.h"
-#include "../TestZone.h"
+#include "QuidditchWorldSubsystem.h"
+#include "Broom.h"
 
 // Sets default values for this component's properties
 UZoneUIManager::UZoneUIManager()
@@ -18,11 +19,28 @@ void UZoneUIManager::BeginPlay()
 {
 	Super::BeginPlay();
 
-	ATestZone::OnZoneEntered.AddUObject(this, &UZoneUIManager::HandleZoneEntered);
+	if (UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
+	{
+		ZoneEnteredHandle = Subsystem->OnZoneEntered.AddUObject(this, &UZoneUIManager::HandleZoneEntered);
+	}
 }
 
-void UZoneUIManager::HandleZoneEntered(EZoneType NewZone)
+void UZoneUIManager::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
+	{
+		Subsystem->OnZoneEntered.Remove(ZoneEnteredHandle);
+	}
+
+	Super::EndPlay(EndPlayReason);
+}
+
+void UZoneUIManager::HandleZoneEntered(ABroom* Broom, EZoneType NewZone)
+{
+	// Only react to this component's own broom, and only where a player sees the UI.
+	const APawn* OwnerPawn = Cast<APawn>(GetOwner());
+	if (!OwnerPawn || Broom != OwnerPawn || !OwnerPawn->IsLocallyControlled()) return;
+
 	CurrentZone = NewZone;
 	OnZoneChanged.Broadcast(NewZone);
 }

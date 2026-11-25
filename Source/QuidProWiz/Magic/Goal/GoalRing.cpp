@@ -1,21 +1,20 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
-
 #include "GoalRing.h"
+#include "DataAsset/GoalRingDataAsset.h"
+#include "QuidditchWorldSubsystem.h"
 #include "Quaffle.h"
 #include "Components/BoxComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/SceneComponent.h"
-#include "DrawDebugHelpers.h"
+#include "NiagaraFunctionLibrary.h"
+#include "TimerManager.h"
 
-TArray<TWeakObjectPtr<AGoalRing>> AGoalRing::RegisteredGoals;
-FOnGoalScored AGoalRing::OnGoalScored;
-
-// Sets default values
 AGoalRing::AGoalRing()
 {
- 	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
+	// Tick only runs the local highlight pulse, so it is enabled on demand.
 	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = false;
 	bReplicates = true;
 
 	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
@@ -46,35 +45,53 @@ AGoalRing::AGoalRing()
 	AimDirectionComponent->SetRelativeLocation(FVector(-75.0f, 0.0f, 0.0f));
 }
 
-// Called when the game starts or when spawned
 void AGoalRing::BeginPlay()
 {
 	Super::BeginPlay();
-	
-	ScoreVolume->OnComponentBeginOverlap.AddDynamic(this, &AGoalRing::OnScoreVolumeBeginOverlap);
-	
-	PurgeStaleGoals();
-	RegisteredGoals.Add(this);
 
-	if (GoalDataAsset && RingMesh)
+	if (HasAuthority())
 	{
-		RingMesh->SetMaterial(0, GoalDataAsset->NormalMaterial);
-
-		LockOnVolume->SetBoxExtent(FVector(GoalDataAsset->LockOnVolumeExtent));
-		ScoreVolume->SetBoxExtent(FVector(GoalDataAsset->ScoreVolumeExtent, GoalDataAsset->ScoreVolumeExtent,
-			GoalDataAsset->ScoreVolumeExtent));
+		ScoreVolume->OnComponentBeginOverlap.AddDynamic(this, &AGoalRing::OnScoreVolumeBeginOverlap);
 	}
+
+	if (UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
+	{
+		Subsystem->RegisterGoal(this);
+	}
+
+	if (GoalDataAsset)
+	{
+		LockOnVolume->SetBoxExtent(FVector(GoalDataAsset->LockOnVolumeExtent));
+		ScoreVolume->SetBoxExtent(FVector(GoalDataAsset->ScoreVolumeExtent));
+	}
+
+	ApplyIdleMaterial();
 }
 
-void AGoalRing::OnScoreVolumeBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor, 
+void AGoalRing::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
+	{
+		Subsystem->UnregisterGoal(this);
+	}
+
+	GetWorldTimerManager().ClearTimer(ScoreFlashTimerHandle);
+	Super::EndPlay(EndPlayReason);
+}
+
+int32 AGoalRing::GetScoreValue() const
+{
+	if (ScoreOverride > 0) return ScoreOverride;
+	return GoalDataAsset ? GoalDataAsset->ScoreValue : 10;
+}
+
+void AGoalRing::OnScoreVolumeBeginOverlap(UPrimitiveComponent* OverlappedComponent, AActor* OtherActor,
 	UPrimitiveComponent* OtherComp, int32 OtherBodyIndex, bool bFromSweep, const FHitResult& SweepResult)
 {
 	if (!HasAuthority() || !bGoalEnabled) return;
 
 	AQuaffle* Quaffle = Cast<AQuaffle>(OtherActor);
-	if (!Quaffle) return;
-
-	if (!Quaffle->CanScore()) return;
+	if (!Quaffle || !Quaffle->CanScore()) return;
 
 	if (IsValidGoalScore(Quaffle))
 	{
@@ -82,91 +99,88 @@ void AGoalRing::OnScoreVolumeBeginOverlap(UPrimitiveComponent* OverlappedCompone
 	}
 }
 
-bool AGoalRing::IsValidGoalScore(AQuaffle* Quaffle) const
+bool AGoalRing::IsValidGoalScore(const AQuaffle* Quaffle) const
 {
 	if (!Quaffle) return false;
 
-	const FVector RingLocation = GetActorLocation();
-	const FVector RingForward = GetActorForwardVector();
-
-	// Verify throw originated from the correct side
+	// The throw must start in front of the ring so balls can't score through the back.
 	const float ThrowStartDot = FVector::DotProduct(
-		Quaffle->GetLastThrownLocation() - RingLocation, RingForward);
-	const bool bThrownFromCorrectSide = ThrowStartDot < 0.f;
-
-	return bThrownFromCorrectSide;
+		Quaffle->GetLastThrownLocation() - GetActorLocation(), GetActorForwardVector());
+	return ThrowStartDot < 0.f;
 }
 
 void AGoalRing::RegisterScore(AQuaffle* Quaffle)
 {
 	if (!Quaffle) return;
 
-	const int32 ScoreValue = ScoreOverride > 0 ? ScoreOverride : 
-		(GoalDataAsset ? GoalDataAsset->ScoreValue : 10);
-
 	Quaffle->NotifyScored();
-	TriggerScoreFlash();
-	OnGoalScored.Broadcast(this, ScoreValue);
+	MulticastPlayScoreFeedback();
+
+	if (UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
+	{
+		Subsystem->OnGoalScored.Broadcast(this, GetScoreValue());
+	}
 }
 
-void AGoalRing::EndPlay(const EEndPlayReason::Type EndPlayReason)
+void AGoalRing::MulticastPlayScoreFeedback_Implementation()
 {
-	RegisteredGoals.Remove(this);
-	Super::EndPlay(EndPlayReason);
+	if (!GoalDataAsset) return;
+
+	if (GoalDataAsset->ScoreEffect)
+	{
+		UNiagaraFunctionLibrary::SpawnSystemAtLocation(this, GoalDataAsset->ScoreEffect,
+			GetActorLocation(), GetActorRotation());
+	}
+
+	if (RingMesh && GoalDataAsset->ScoreFlashMaterial)
+	{
+		RingMesh->SetMaterial(0, GoalDataAsset->ScoreFlashMaterial);
+
+		GetWorldTimerManager().ClearTimer(ScoreFlashTimerHandle);
+		GetWorldTimerManager().SetTimer(ScoreFlashTimerHandle, this,
+			&AGoalRing::ResetAfterScoreFlash, GoalDataAsset->ScoreFlashDuration, false);
+	}
 }
 
-// Called every frame
 void AGoalRing::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
-	if (bLocallyHighlighted)
-	{
-		UpdatePulse(DeltaTime);
-	}
-	else
-	{
-		PulseTimer = 0.f;
-	}
+	UpdatePulse(DeltaTime);
 }
 
 void AGoalRing::UpdatePulse(float DeltaTime)
 {
-	if (!RingMesh) return;
+	if (!RingMesh || !GoalDataAsset) return;
 
-	PulseTimer += DeltaTime * PulseSpeed;
-	const float PulseValue = (FMath::Sin(PulseTimer) + 1.f) / 2.f;
-
-	const float BaseScale = 1.f;
-	const float NewScale = BaseScale + (PulseValue * PulseIntensity);
-	RingMesh->SetRelativeScale3D(FVector(NewScale, NewScale, NewScale));
-}
-
-void AGoalRing::TriggerScoreFlash()
-{
-	if (!RingMesh || !ScoreFlashMaterial) return;
-
-	RingMesh->SetMaterial(0, ScoreFlashMaterial);
-
-	GetWorldTimerManager().ClearTimer(ScoreFlashTimerHandle);
-	GetWorldTimerManager().SetTimer(ScoreFlashTimerHandle, this, 
-		&AGoalRing::ResetAfterScoreFlash, ScoreFlashDuration, false);
+	PulseTimer += DeltaTime * GoalDataAsset->HighlightPulseSpeed;
+	const float PulseValue = (FMath::Sin(PulseTimer) + 1.f) * 0.5f;
+	const float NewScale = 1.f + PulseValue * GoalDataAsset->HighlightPulseIntensity;
+	RingMesh->SetRelativeScale3D(FVector(NewScale));
 }
 
 void AGoalRing::ResetAfterScoreFlash()
 {
-	if (!RingMesh) return;
+	ApplyIdleMaterial();
+}
 
-	if (GoalDataAsset && GoalDataAsset->NormalMaterial)
+void AGoalRing::ApplyIdleMaterial()
+{
+	if (!RingMesh || !GoalDataAsset) return;
+
+	UMaterialInterface* Material = bLocallyHighlighted && GoalDataAsset->HighlightedMaterial
+		? GoalDataAsset->HighlightedMaterial.Get()
+		: GoalDataAsset->NormalMaterial.Get();
+
+	if (Material)
 	{
-		RingMesh->SetMaterial(0, GoalDataAsset->NormalMaterial);
+		RingMesh->SetMaterial(0, Material);
 	}
 }
 
 FVector AGoalRing::GetAimDirection() const
 {
-	return AimDirectionComponent ? AimDirectionComponent->GetComponentLocation() : 
-		GetActorLocation() - (GetActorForwardVector() * 0.75f);
+	return AimDirectionComponent ? AimDirectionComponent->GetComponentLocation()
+		: GetActorLocation() - GetActorForwardVector() * 75.f;
 }
 
 void AGoalRing::SetLocallyHighlighted(bool bHighlighted)
@@ -174,28 +188,17 @@ void AGoalRing::SetLocallyHighlighted(bool bHighlighted)
 	if (bLocallyHighlighted == bHighlighted) return;
 
 	bLocallyHighlighted = bHighlighted;
+	PulseTimer = 0.f;
+	SetActorTickEnabled(bHighlighted);
 
-	if (!RingMesh) return;
-
-	if (!bHighlighted)
+	if (!bHighlighted && RingMesh)
 	{
 		RingMesh->SetRelativeScale3D(FVector::OneVector);
 	}
 
-	if (bLocallyHighlighted && GoalDataAsset && GoalDataAsset->HighlightedMaterial)
+	// Don't stomp an in-progress score flash; it restores the idle material when it ends.
+	if (!GetWorldTimerManager().IsTimerActive(ScoreFlashTimerHandle))
 	{
-		RingMesh->SetMaterial(0, GoalDataAsset->HighlightedMaterial);
+		ApplyIdleMaterial();
 	}
-	else if (GoalDataAsset && GoalDataAsset->NormalMaterial)
-	{
-		RingMesh->SetMaterial(0, GoalDataAsset->NormalMaterial);
-	}
-}
-
-void AGoalRing::PurgeStaleGoals()
-{
-	RegisteredGoals.RemoveAll([](const TWeakObjectPtr<AGoalRing>& GoalPtr)
-	{
-		return !GoalPtr.IsValid();
-	});
 }
