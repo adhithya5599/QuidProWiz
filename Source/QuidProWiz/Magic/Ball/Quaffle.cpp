@@ -151,8 +151,10 @@ void AQuaffle::PickUp(AActor* PlayerActor)
 	USkeletalMeshComponent* RiderMesh = Broom ? Broom->GetRiderMesh() : nullptr;
 	if (!RiderMesh) return;
 
+	// Socket lookups on a rider without a mesh only log warnings, so fall back to the component origin.
+	const FName Socket = QuaffleData && RiderMesh->GetSkinnedAsset() ? QuaffleData->SocketName : NAME_None;
 	const FAttachmentTransformRules AttachmentRules(EAttachmentRule::SnapToTarget, true);
-	AttachToComponent(RiderMesh, AttachmentRules, QuaffleData ? QuaffleData->SocketName : NAME_None);
+	AttachToComponent(RiderMesh, AttachmentRules, Socket);
 
 	if (QuaffleData)
 	{
