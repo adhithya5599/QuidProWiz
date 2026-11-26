@@ -20,6 +20,8 @@
 #include "EnhancedInputSubsystems.h"
 #include "InputActionValue.h"
 #include "GameFramework/Controller.h"
+#include "GameFramework/PlayerController.h"
+#include "Camera/PlayerCameraManager.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "Net/UnrealNetwork.h"
 #include "TimerManager.h"
@@ -35,7 +37,7 @@ ABroom::ABroom(const FObjectInitializer& ObjectInitializer)
 {
 	PrimaryActorTick.bCanEverTick = true;
 
-	// The movement component turns the broom toward the controller's yaw at its rotation rate.
+	// The movement component turns the broom to face its direction of travel.
 	bUseControllerRotationPitch = false;
 	bUseControllerRotationYaw = false;
 	bUseControllerRotationRoll = false;
@@ -44,20 +46,27 @@ ABroom::ABroom(const FObjectInitializer& ObjectInitializer)
 	GetCapsuleComponent()->SetGenerateOverlapEvents(true);
 
 	// The Character's mesh component is an empty visual root: the movement component offsets it
-	// to smooth corrections on remote machines, and the broom and rider ride along with it.
-	USceneComponent* VisualRoot = GetMesh();
+	// to smooth corrections on remote machines. The pivot under it leans with the motion, and the
+	// broom and rider ride on the pivot.
+	VisualPivot = CreateDefaultSubobject<USceneComponent>(TEXT("VisualPivot"));
+	VisualPivot->SetupAttachment(GetMesh());
 
 	BroomMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BroomMesh"));
-	BroomMesh->SetupAttachment(VisualRoot);
+	BroomMesh->SetupAttachment(VisualPivot);
 
 	RiderMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("RiderMesh"));
-	RiderMesh->SetupAttachment(VisualRoot);
+	RiderMesh->SetupAttachment(VisualPivot);
 
+	// The camera looks along the aim (the controller's rotation) and trails the broom with lag.
 	BroomCameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("BroomCameraBoom"));
 	BroomCameraBoom->SetupAttachment(RootComponent);
-	BroomCameraBoom->TargetArmLength = 300.0f;
-	BroomCameraBoom->bUsePawnControlRotation = false;
+	BroomCameraBoom->TargetArmLength = 420.0f;
+	BroomCameraBoom->bUsePawnControlRotation = true;
+	BroomCameraBoom->bInheritRoll = false;
 	BroomCameraBoom->bDoCollisionTest = true;
+	BroomCameraBoom->bEnableCameraLag = true;
+	BroomCameraBoom->bEnableCameraRotationLag = true;
+	BroomCameraBoom->CameraLagMaxDistance = 400.f;
 
 	BroomCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("BroomCamera"));
 	BroomCamera->SetupAttachment(BroomCameraBoom, USpringArmComponent::SocketName);
@@ -82,9 +91,19 @@ void ABroom::BeginPlay()
 {
 	Super::BeginPlay();
 
-	if (BroomMesh)
+	// Lean around the middle of the capsule rather than the mesh root at the rider's feet:
+	// move the pivot up and the meshes down by the same amount (world positions unchanged).
+	if (VisualPivot && GetMesh())
 	{
-		InitialMeshRotation = BroomMesh->GetRelativeRotation();
+		const FVector LeanCentre(0.f, 0.f, -GetMesh()->GetRelativeLocation().Z);
+		VisualPivot->SetRelativeLocation(LeanCentre);
+		for (USceneComponent* Visual : { static_cast<USceneComponent*>(BroomMesh), static_cast<USceneComponent*>(RiderMesh) })
+		{
+			if (Visual && Visual->GetAttachParent() == VisualPivot)
+			{
+				Visual->AddRelativeLocation(-LeanCentre);
+			}
+		}
 	}
 
 	if (RiderMesh)
@@ -93,11 +112,7 @@ void ABroom::BeginPlay()
 	}
 
 	LastVisualYaw = GetActorRotation().Yaw;
-
-	if (BroomData)
-	{
-		GetCharacterMovement()->RotationRate = FRotator(0.f, BroomData->HeadingRotationRate, 0.f);
-	}
+	HeldAim = GetActorRotation();
 
 	if (UQuidditchWorldSubsystem* Subsystem = UQuidditchWorldSubsystem::Get(this))
 	{
@@ -125,10 +140,20 @@ void ABroom::NotifyControllerChanged()
 {
 	Super::NotifyControllerChanged();
 
-	// Start the controller facing the way the broom faces, so it doesn't swing round on possession.
+	// Start the aim facing the way the broom faces, so it doesn't swing round on possession.
 	if (Controller && IsLocallyControlled())
 	{
 		Controller->SetControlRotation(FRotator(0.f, GetActorRotation().Yaw, 0.f));
+	}
+
+	bFreeLook = false;
+	bReturningFromFreeLook = false;
+
+	// Limit how far the player can aim up and down.
+	if (const APlayerController* PlayerController = Cast<APlayerController>(Controller); PlayerController && PlayerController->PlayerCameraManager && BroomData)
+	{
+		PlayerController->PlayerCameraManager->ViewPitchMin = -BroomData->MaxAimPitch;
+		PlayerController->PlayerCameraManager->ViewPitchMax = BroomData->MaxAimPitch;
 	}
 }
 
@@ -136,14 +161,9 @@ void ABroom::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	// Re-read each frame so live tuning of the data asset applies straight away.
-	if (BroomData)
-	{
-		GetCharacterMovement()->RotationRate.Yaw = BroomData->HeadingRotationRate;
-	}
-
-	UpdateControlHeading(DeltaTime);
-	UpdateMeshTilt(DeltaTime);
+	UpdateSteering(DeltaTime);
+	UpdateCamera(DeltaTime);
+	UpdateVisualTilt(DeltaTime);
 	UpdateBludgerWarning();
 }
 
@@ -176,6 +196,17 @@ void ABroom::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 	EnhancedInput->BindAction(BroomAscendAction, ETriggerEvent::Triggered, this, &ABroom::Ascend);
 	EnhancedInput->BindAction(BroomAscendAction, ETriggerEvent::Completed, this, &ABroom::Ascend);
 
+	if (BroomLookAction)
+	{
+		EnhancedInput->BindAction(BroomLookAction, ETriggerEvent::Triggered, this, &ABroom::Look);
+	}
+
+	if (BroomFreeLookAction)
+	{
+		EnhancedInput->BindAction(BroomFreeLookAction, ETriggerEvent::Started, this, &ABroom::FreeLook);
+		EnhancedInput->BindAction(BroomFreeLookAction, ETriggerEvent::Completed, this, &ABroom::FreeLook);
+	}
+
 	EnhancedInput->BindAction(BroomSpeedBoostAction, ETriggerEvent::Started, this, &ABroom::SpeedBoost);
 	EnhancedInput->BindAction(BroomSpeedBoostAction, ETriggerEvent::Completed, this, &ABroom::SpeedBoost);
 
@@ -186,6 +217,8 @@ void ABroom::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 void ABroom::Move(const FInputActionValue& Value) { PerformMove(Value.Get<float>()); }
 void ABroom::Ascend(const FInputActionValue& Value) { PerformAscend(Value.Get<float>()); }
 void ABroom::Turn(const FInputActionValue& Value) { PerformTurn(Value.Get<float>()); }
+void ABroom::Look(const FInputActionValue& Value) { PerformLook(Value.Get<FVector2D>()); }
+void ABroom::FreeLook(const FInputActionValue& Value) { PerformFreeLook(Value.Get<bool>()); }
 void ABroom::SpeedBoost(const FInputActionValue& Value) { PerformSpeedBoost(Value.Get<bool>()); }
 void ABroom::AttemptPickupQuaffle() { PerformPickupQuaffle(); }
 void ABroom::ThrowQuaffle() { PerformThrowQuaffle(); }
@@ -208,36 +241,102 @@ float ABroom::GetCurrentMaxSpeed() const
 	return Movement ? Movement->GetMaxSpeed() : 0.f;
 }
 
-void ABroom::UpdateControlHeading(float DeltaTime)
+FRotator ABroom::GetAimRotation() const
 {
-	if (!BroomData || !Controller || !IsLocallyControlled()) return;
-	if (FMath::IsNearlyZero(CurrentTurnInput)) return;
-
-	FRotator ControlRotation = Controller->GetControlRotation();
-	ControlRotation.Yaw += CurrentTurnInput * BroomData->TurnSpeed * DeltaTime;
-	ControlRotation.Pitch = 0.f;
-	ControlRotation.Roll = 0.f;
-	Controller->SetControlRotation(ControlRotation);
+	if (bFreeLook || bReturningFromFreeLook)
+	{
+		return HeldAim;
+	}
+	return Controller ? Controller->GetControlRotation() : GetActorRotation();
 }
 
-void ABroom::UpdateMeshTilt(float DeltaTime)
+void ABroom::UpdateSteering(float DeltaTime)
 {
-	if (!BroomData || !BroomMesh || DeltaTime <= 0.f) return;
+	if (!BroomData || !Controller || !IsLocallyControlled()) return;
 
+	// Keyboard turning ramps in and out instead of starting and stopping dead.
+	CurrentTurnInput = FMath::FInterpTo(CurrentTurnInput, TargetTurnInput, DeltaTime, BroomData->TurnInputSmoothing);
+	if (FMath::Abs(CurrentTurnInput) < 0.001f && FMath::IsNearlyZero(TargetTurnInput))
+	{
+		CurrentTurnInput = 0.f;
+	}
+
+	if (!FMath::IsNearlyZero(CurrentTurnInput))
+	{
+		const float YawDelta = CurrentTurnInput * BroomData->TurnSpeed * DeltaTime;
+		if (bFreeLook || bReturningFromFreeLook)
+		{
+			HeldAim.Yaw += YawDelta; // keyboard still steers the held course
+		}
+		if (!bFreeLook)
+		{
+			FRotator ControlRotation = Controller->GetControlRotation();
+			ControlRotation.Yaw += YawDelta;
+			Controller->SetControlRotation(ControlRotation);
+		}
+	}
+
+	// After free look the camera swings back behind the broom; then aim and camera are one again.
+	if (bReturningFromFreeLook)
+	{
+		const FRotator Current = Controller->GetControlRotation();
+		const FRotator Next = FMath::RInterpTo(Current, HeldAim, DeltaTime, BroomData->FreeLookReturnSpeed);
+		Controller->SetControlRotation(Next);
+		if ((Next - HeldAim).GetNormalized().IsNearlyZero(1.f))
+		{
+			bReturningFromFreeLook = false;
+		}
+	}
+
+	// A held "turn" key is re-sent every frame; clear it so releasing the key stops the turn.
+	TargetTurnInput = 0.f;
+}
+
+void ABroom::UpdateCamera(float DeltaTime)
+{
+	if (!BroomData || !IsLocallyControlled() || !BroomCameraBoom || !BroomCamera) return;
+
+	const UBroomMovementComponent* Movement = GetBroomMovement();
+	const float Cruise = Movement ? FMath::Max(Movement->GetCruiseSpeed(), 1.f) : 1.f;
+	const float BoostedTop = Cruise * FMath::Max(BroomData->SpeedBoostMultiplier, 1.f);
+	const float SpeedAlpha = FMath::Clamp(GetCurrentSpeed() / BoostedTop, 0.f, 1.f);
+
+	const float TargetLength = FMath::Lerp(BroomData->CameraDistance, BroomData->CameraDistanceAtSpeed, SpeedAlpha);
+	BroomCameraBoom->TargetArmLength = FMath::FInterpTo(BroomCameraBoom->TargetArmLength, TargetLength, DeltaTime, 3.f);
+	BroomCameraBoom->SocketOffset = FVector(0.f, 0.f, BroomData->CameraHeight);
+	BroomCameraBoom->CameraLagSpeed = BroomData->CameraLagSpeed;
+	BroomCameraBoom->CameraRotationLagSpeed = BroomData->CameraRotationLagSpeed;
+	BroomCameraBoom->bEnableCameraLag = BroomData->CameraLagSpeed > 0.f;
+	BroomCameraBoom->bEnableCameraRotationLag = BroomData->CameraRotationLagSpeed > 0.f;
+
+	// Widen the view while boosting fast.
+	const bool bBoosting = Movement && Movement->WantsToBoost();
+	const float BoostAlpha = bBoosting ? FMath::Clamp((GetCurrentSpeed() - Cruise) / FMath::Max(BoostedTop - Cruise, 1.f), 0.f, 1.f) : 0.f;
+	const float TargetFOV = FMath::Lerp(BroomData->CameraFOV, BroomData->CameraBoostFOV, BoostAlpha);
+	BroomCamera->SetFieldOfView(FMath::FInterpTo(BroomCamera->FieldOfView, TargetFOV, DeltaTime, BroomData->CameraFOVInterpSpeed));
+}
+
+void ABroom::UpdateVisualTilt(float DeltaTime)
+{
+	if (!BroomData || !VisualPivot || DeltaTime <= 0.f || bIsRagdolling) return;
+
+	// Bank from how fast the heading is changing.
 	const float Yaw = GetActorRotation().Yaw;
 	const float YawRate = FMath::FindDeltaAngleDegrees(LastVisualYaw, Yaw) / DeltaTime;
 	LastVisualYaw = Yaw;
 
-	const float TurnAmount = BroomData->TurnSpeed > 0.f ? FMath::Clamp(YawRate / BroomData->TurnSpeed, -1.f, 1.f) : 0.f;
-	const float MaxSpeed = GetCurrentMaxSpeed();
-	const float AscendAmount = MaxSpeed > 0.f ? FMath::Clamp(GetVelocity().Z / MaxSpeed, -1.f, 1.f) : 0.f;
+	const float BankReference = FMath::Max(BroomData->TurnRateFast, 1.f);
+	const float TurnAmount = FMath::Clamp(YawRate / BankReference, -1.f, 1.f);
 
-	FRotator TargetMeshRotation = InitialMeshRotation;
-	TargetMeshRotation.Pitch += -TurnAmount * BroomData->BankAngle;
-	TargetMeshRotation.Roll += -AscendAmount * BroomData->AscendTiltAngle;
+	// Pitch the nose with the climb/dive angle, fading out when nearly hovering.
+	const FVector Velocity = GetVelocity();
+	const float Speed2D = FVector(Velocity.X, Velocity.Y, 0.f).Size();
+	const float ClimbAngle = FMath::RadiansToDegrees(FMath::Atan2(Velocity.Z, FMath::Max(Speed2D, 1.f)));
+	const float PitchFade = FMath::Clamp(Velocity.Size() / 300.f, 0.f, 1.f);
+	const float Pitch = FMath::Clamp(ClimbAngle, -BroomData->AscendTiltAngle, BroomData->AscendTiltAngle) * PitchFade;
 
-	BroomMesh->SetRelativeRotation(FMath::RInterpTo(BroomMesh->GetRelativeRotation(), TargetMeshRotation,
-		DeltaTime, BroomData->BankInterpSpeed));
+	const FRotator Target(Pitch, 0.f, TurnAmount * BroomData->BankAngle);
+	VisualPivot->SetRelativeRotation(FMath::RInterpTo(VisualPivot->GetRelativeRotation(), Target, DeltaTime, BroomData->BankInterpSpeed));
 }
 
 void ABroom::PerformMove(float AxisValue)
@@ -245,7 +344,8 @@ void ABroom::PerformMove(float AxisValue)
 	if (bIsStunned || !IsMatchInProgress()) return;
 	if (!Controller || FMath::IsNearlyZero(AxisValue)) return;
 
-	AddMovementInput(GetActorForwardVector(), AxisValue);
+	// Fly toward the aim, climbing or diving with its pitch.
+	AddMovementInput(GetAimRotation().Vector(), AxisValue);
 }
 
 void ABroom::PerformAscend(float AxisValue)
@@ -254,14 +354,48 @@ void ABroom::PerformAscend(float AxisValue)
 
 	CurrentAscendInput = AxisValue;
 	if (!Controller || FMath::IsNearlyZero(AxisValue)) return;
-	AddMovementInput(FVector::UpVector, CurrentAscendInput);
+
+	const float Strength = BroomData ? BroomData->VerticalInputStrength : 1.f;
+	AddMovementInput(FVector::UpVector, CurrentAscendInput * Strength);
 }
 
 void ABroom::PerformTurn(float AxisValue)
 {
 	if (bIsStunned || !IsMatchInProgress()) return;
 
-	CurrentTurnInput = AxisValue;
+	TargetTurnInput = FMath::Clamp(AxisValue, -1.f, 1.f);
+}
+
+void ABroom::PerformLook(const FVector2D& LookAxis)
+{
+	if (!Controller || LookAxis.IsNearlyZero()) return;
+
+	// Looking during the swing back after free look takes over the aim straight away.
+	if (bReturningFromFreeLook)
+	{
+		bReturningFromFreeLook = false;
+	}
+
+	const float Sensitivity = BroomData ? BroomData->LookSensitivity : 1.f;
+	AddControllerYawInput(LookAxis.X * Sensitivity);
+	AddControllerPitchInput(LookAxis.Y * Sensitivity);
+}
+
+void ABroom::PerformFreeLook(bool bActive)
+{
+	if (!Controller) return;
+
+	if (bActive && !bFreeLook)
+	{
+		HeldAim = GetAimRotation();
+		bFreeLook = true;
+		bReturningFromFreeLook = false;
+	}
+	else if (!bActive && bFreeLook)
+	{
+		bFreeLook = false;
+		bReturningFromFreeLook = true;
+	}
 }
 
 void ABroom::PerformSpeedBoost(bool bIsActive)
@@ -497,7 +631,7 @@ void ABroom::MulticastFinishRespawn_Implementation()
 		RiderMesh->SetSimulatePhysics(false);
 		RiderMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		RiderMesh->SetAnimationMode(EAnimationMode::AnimationBlueprint);
-		RiderMesh->AttachToComponent(GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+		RiderMesh->AttachToComponent(VisualPivot ? VisualPivot.Get() : GetMesh(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
 		RiderMesh->SetRelativeTransform(InitialRiderTransform);
 		RiderMesh->SetVisibility(true);
 	}

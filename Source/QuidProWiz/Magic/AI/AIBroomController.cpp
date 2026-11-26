@@ -167,18 +167,18 @@ void AAIBroomController::FlyToLocation(const FVector& TargetLocation, float Delt
 	const float Distance = ToTarget.Size();
 	if (Distance < BroomAIConstants::ArrivalRadius) return;
 
-	const FVector Direction = ToTarget.GetSafeNormal();
-	const float RightDot = FVector::DotProduct(Broom->GetActorRightVector(), Direction);
-	const float UpDot = FVector::DotProduct(FVector::UpVector, Direction);
-
 	const float SpeedFactor = Distance < BroomAIConstants::SlowDownRadius
 		? FMath::Clamp(Distance / BroomAIConstants::SlowDownRadius, BroomAIConstants::MinApproachSpeedFactor, 1.f)
 		: 1.f;
 
+	// Steer like a player: turn the aim toward the target, then throttle along it.
+	const FRotator Desired = ToTarget.Rotation();
+	const FRotator Aim = FMath::RInterpTo(GetControlRotation(), Desired, DeltaTime,
+		AIData->TurnInterpSpeed * BroomAIConstants::SteeringGain);
+	SetControlRotation(Aim);
+
 	Broom->SetSpeedOverride(AIData->FlySpeed * SpeedFactor);
 	Broom->PerformMove(1.f);
-	Broom->PerformTurn(FMath::Clamp(RightDot * BroomAIConstants::SteeringGain, -1.f, 1.f));
-	Broom->PerformAscend(FMath::Clamp(UpDot * BroomAIConstants::SteeringGain, -1.f, 1.f));
 }
 
 void AAIBroomController::AttemptPickup()

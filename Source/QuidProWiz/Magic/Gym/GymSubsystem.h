@@ -8,6 +8,7 @@
 #include "GymSubsystem.generated.h"
 
 class AGymSnitchTrainer;
+class AGymFlightCourse;
 class FNumericProperty;
 
 /**
@@ -63,6 +64,10 @@ public:
 	void UnregisterSnitchTrainer(AGymSnitchTrainer* Trainer);
 	AGymSnitchTrainer* GetSnitchTrainer() const;
 
+	void RegisterFlightCourse(AGymFlightCourse* Course);
+	void UnregisterFlightCourse(AGymFlightCourse* Course);
+	AGymFlightCourse* GetFlightCourse() const;
+
 protected:
 
 	virtual bool DoesSupportWorldType(const EWorldType::Type WorldType) const override;
@@ -78,6 +83,7 @@ private:
 
 	TArray<FOriginalValue> OriginalValues;
 	TArray<TWeakObjectPtr<AGymSnitchTrainer>> SnitchTrainers;
+	TArray<TWeakObjectPtr<AGymFlightCourse>> FlightCourses;
 
 	static FNumericProperty* FindNumericProperty(const UObject* Object, FName PropertyName);
 	static double ReadNumeric(const UObject* Object, const FNumericProperty* Property);

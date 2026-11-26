@@ -80,6 +80,8 @@ enum class EGymAction : uint8
 	ResetBludgers,
 	/** Catch-and-release the practice Snitch from its trainer again. */
 	ResetPracticeSnitch,
+	/** Abandon the current flight-course lap. */
+	ResetFlightCourse,
 	/** Reload the current level (restarts the match). */
 	RestartLevel,
 };

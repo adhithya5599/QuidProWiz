@@ -32,6 +32,12 @@ public:
 	virtual void OnUnPossess() override;
 	virtual void Tick(float DeltaTime) override;
 
+	/**
+	 * The control rotation is this broom's aim (steered in FlyToLocation), including pitch to climb
+	 * and dive. The base AI controller would overwrite it every frame and flatten its pitch.
+	 */
+	virtual void UpdateControlRotation(float DeltaTime, bool bUpdatePawn = true) override {}
+
 	void FlyToLocation(const FVector& TargetLocation, float DeltaTime);
 	void AttemptPickup();
 	void AttemptThrow();

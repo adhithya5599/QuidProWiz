@@ -26,14 +26,19 @@ class UZoneUIManager;
 /**
  * The flying character used by players and AI.
  *
- * Movement is client-predicted by UBroomMovementComponent (the Character Movement Component in
- * flying mode): forward/ascend input becomes acceleration, turning rotates the controller's yaw,
- * and boost travels with each saved move. Both input and AI controllers drive the broom through
- * the same Perform* API, so every rule (stun, match phase, cooldowns) applies to both. Gameplay
- * outcomes (pickup, throw, hits, stun) are decided on the server via Server RPCs.
+ * Steering: the controller's rotation is the aim. Mouse/stick look and the A/D keys rotate it,
+ * the camera looks along it, and throttle flies the broom toward it (pitch included, so looking
+ * up climbs and looking down dives). Holding free look lets the camera look around while the
+ * broom keeps its course. AI controllers steer the same way by rotating their control rotation.
  *
- * Visual components hang off the Character's mesh component, which the movement component
- * smooths on remote machines, so other players' brooms glide instead of snapping.
+ * Movement is client-predicted by UBroomMovementComponent (momentum flight in the Character
+ * Movement Component's flying mode; see its comment). Both input and AI controllers drive the
+ * broom through the same Perform* API, so every rule (stun, match phase, cooldowns) applies to
+ * both. Gameplay outcomes (pickup, throw, hits, stun) are decided on the server via Server RPCs.
+ *
+ * Visual components hang off VisualPivot under the Character's mesh component: the movement
+ * component smooths the mesh on remote machines, and the pivot banks and pitches with the
+ * motion, so the rider leans with the broom.
  */
 UCLASS()
 class QUIDPROWIZ_API ABroom : public ACharacter
@@ -53,6 +58,10 @@ protected:
 
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	/** Banks and pitches with the motion; the broom and rider meshes ride on it. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Broom|Mesh")
+	TObjectPtr<USceneComponent> VisualPivot;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Broom|Mesh")
 	TObjectPtr<UStaticMeshComponent> BroomMesh;
@@ -98,6 +107,14 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Broom|Input")
 	TObjectPtr<UInputAction> BroomAscendAction;
 
+	/** Axis2D: mouse / right stick aiming. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Broom|Input")
+	TObjectPtr<UInputAction> BroomLookAction;
+
+	/** Held: look around without changing course. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Broom|Input")
+	TObjectPtr<UInputAction> BroomFreeLookAction;
+
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = "Broom|Input")
 	TObjectPtr<UInputMappingContext> BroomInputMappingContext;
 
@@ -119,10 +136,27 @@ public:
 
 	// --- Action API shared by player input and AI ---------------------------------------------
 
+	/** Throttle toward the aim: 1 = full ahead, negative = brake / back up. */
 	void PerformMove(float AxisValue);
+
+	/** Climb (+) or dive (-) straight up/down on top of the throttle. */
 	void PerformAscend(float AxisValue);
+
+	/** Keyboard turning: rotates the aim left (-) / right (+) at the data asset's turn speed. */
 	void PerformTurn(float AxisValue);
+
+	/** Mouse / stick aiming (X = yaw, Y = pitch, already scaled by the input mapping). */
+	void PerformLook(const FVector2D& LookAxis);
+
+	/** While true the camera looks around and the broom keeps its course. */
+	void PerformFreeLook(bool bActive);
+
 	void PerformSpeedBoost(bool bIsActive);
+
+	/** Where the broom is steering: the controller's rotation, or the held course during free look. */
+	FRotator GetAimRotation() const;
+
+	bool IsFreeLooking() const { return bFreeLook; }
 
 	/** Picks up the nearest free Quaffle in range (asks the server when called on a client). */
 	void PerformPickupQuaffle();
@@ -168,6 +202,8 @@ public:
 	float GetCurrentMaxSpeed() const;
 
 	UBroomDataAsset* GetBroomData() const { return BroomData; }
+	USceneComponent* GetVisualPivot() const { return VisualPivot; }
+	USpringArmComponent* GetCameraBoom() const { return BroomCameraBoom; }
 	UGoalTargetingComponent* GetGoalTargeting() const { return GoalTargetingComponent; }
 	UZoneUIManager* GetZoneUI() const { return ZoneUIManager; }
 	UCameraComponent* GetBroomCamera() const { return BroomCamera; }
@@ -196,15 +232,20 @@ protected:
 	void Move(const FInputActionValue& Value);
 	void Ascend(const FInputActionValue& Value);
 	void Turn(const FInputActionValue& Value);
+	void Look(const FInputActionValue& Value);
+	void FreeLook(const FInputActionValue& Value);
 	void SpeedBoost(const FInputActionValue& Value);
 	void AttemptPickupQuaffle();
 	void ThrowQuaffle();
 
-	/** Locally controlled brooms turn by rotating the controller's yaw; movement follows it. */
-	virtual void UpdateControlHeading(float DeltaTime);
+	/** Local: smoothed keyboard turning and the camera's swing back after free look. */
+	virtual void UpdateSteering(float DeltaTime);
 
-	/** Cosmetic bank/tilt derived from observed motion, so it looks the same on every machine. */
-	virtual void UpdateMeshTilt(float DeltaTime);
+	/** Local: camera distance, lag and field of view from speed and boost. */
+	virtual void UpdateCamera(float DeltaTime);
+
+	/** Cosmetic bank/pitch derived from observed motion, so it looks the same on every machine. */
+	virtual void UpdateVisualTilt(float DeltaTime);
 
 private:
 
@@ -241,11 +282,16 @@ private:
 
 	// --- Local state --------------------------------------------------------------------------
 
+	float TargetTurnInput = 0.f;
 	float CurrentTurnInput = 0.f;
 	float CurrentAscendInput = 0.f;
 	float LastVisualYaw = 0.f;
-	FRotator InitialMeshRotation = FRotator::ZeroRotator;
 	FTransform InitialRiderTransform;
+
+	/** Course held while free looking (and while the camera swings back afterwards). */
+	FRotator HeldAim = FRotator::ZeroRotator;
+	bool bFreeLook = false;
+	bool bReturningFromFreeLook = false;
 
 	float SpeedOverride = 0.f;
 

@@ -2,6 +2,7 @@
 
 #include "GymSubsystem.h"
 #include "GymSnitchTrainer.h"
+#include "GymFlightCourse.h"
 #include "QuidditchWorldSubsystem.h"
 #include "Broom.h"
 #include "Quaffle.h"
@@ -291,6 +292,13 @@ FText UGymSubsystem::ExecuteAction(const FGymActionEntry& Entry)
 		}
 		return LOCTEXT("ResetSnitch", "Practice Snitch released again.");
 
+	case EGymAction::ResetFlightCourse:
+		if (AGymFlightCourse* Course = GetFlightCourse(); bAuthority && Course)
+		{
+			Course->ResetRun();
+		}
+		return LOCTEXT("ResetCourse", "Lap reset: fly through gate 1 to start.");
+
 	case EGymAction::RestartLevel:
 		if (bAuthority)
 		{
@@ -319,6 +327,25 @@ AGymSnitchTrainer* UGymSubsystem::GetSnitchTrainer() const
 	for (const TWeakObjectPtr<AGymSnitchTrainer>& Trainer : SnitchTrainers)
 	{
 		if (Trainer.IsValid()) return Trainer.Get();
+	}
+	return nullptr;
+}
+
+void UGymSubsystem::RegisterFlightCourse(AGymFlightCourse* Course)
+{
+	FlightCourses.AddUnique(Course);
+}
+
+void UGymSubsystem::UnregisterFlightCourse(AGymFlightCourse* Course)
+{
+	FlightCourses.Remove(Course);
+}
+
+AGymFlightCourse* UGymSubsystem::GetFlightCourse() const
+{
+	for (const TWeakObjectPtr<AGymFlightCourse>& Course : FlightCourses)
+	{
+		if (Course.IsValid()) return Course.Get();
 	}
 	return nullptr;
 }
