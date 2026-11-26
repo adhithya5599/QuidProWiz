@@ -168,6 +168,8 @@ public:
 	float GetCurrentMaxSpeed() const;
 
 	UBroomDataAsset* GetBroomData() const { return BroomData; }
+	UGoalTargetingComponent* GetGoalTargeting() const { return GoalTargetingComponent; }
+	UZoneUIManager* GetZoneUI() const { return ZoneUIManager; }
 	UCameraComponent* GetBroomCamera() const { return BroomCamera; }
 	USoundManager* GetSoundManager() const { return SoundManager; }
 	AQuaffle* GetHeldQuaffle() const { return HeldQuaffle; }

@@ -58,13 +58,10 @@ void AQuaffle::BeginPlay()
 {
 	Super::BeginPlay();
 
-	InitialSpawnTransform = GetActorTransform();
+	ApplyFlightTuning();
 
 	if (QuaffleData)
 	{
-		ProjectileMovement->MaxSpeed = QuaffleData->ThrowMaxSpeed;
-		ProjectileMovement->ProjectileGravityScale = QuaffleData->ThrowGravityScale;
-
 		if (QuaffleData->ThrowTrailEffect)
 		{
 			TrailEffect->SetAsset(QuaffleData->ThrowTrailEffect);
@@ -192,6 +189,9 @@ bool AQuaffle::ThrowToTarget(const FVector& TargetLocation, float ArcBias)
 {
 	if (!HasAuthority() || !CanBeThrown() || !IsValid(PossessingPlayer)) return false;
 
+	// Re-read every throw so live tuning (the gym sliders) applies to the next throw.
+	ApplyFlightTuning();
+
 	AActor* PreviousHolder = PossessingPlayer;
 	const FVector ThrowStartLocation = ComputeThrowStartLocation(PreviousHolder);
 
@@ -266,15 +266,31 @@ void AQuaffle::OnMissRespawn()
 	ResetToSpawn();
 }
 
+void AQuaffle::ApplyFlightTuning()
+{
+	if (!QuaffleData) return;
+
+	ProjectileMovement->MaxSpeed = QuaffleData->ThrowMaxSpeed;
+	ProjectileMovement->ProjectileGravityScale = QuaffleData->ThrowGravityScale;
+}
+
 void AQuaffle::ResetToSpawn()
 {
+	if (!HasAuthority()) return;
+
+	// A held Quaffle is released by its holder first so the broom doesn't keep a stale pointer.
+	if (ABroom* Holder = Cast<ABroom>(PossessingPlayer); Holder && Holder->GetHeldQuaffle() == this)
+	{
+		Holder->DropQuaffle();
+	}
+
 	GetWorldTimerManager().ClearTimer(MissRespawnTimerHandle);
 
 	StopProjectile();
 	DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
 	CollisionComponent->ClearMoveIgnoreActors();
 
-	SetActorTransform(InitialSpawnTransform);
+	Super::ResetToSpawn();
 	PossessingPlayer = nullptr;
 	LastThrower = nullptr;
 

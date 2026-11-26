@@ -21,6 +21,7 @@ public:
 		FActorComponentTickFunction* ThisTickFunction) override;
 
 	AGoalRing* GetCurrentTargetGoal() const { return CurrentTargetGoal; }
+	UGoalTargetingDataAsset* GetTargetingData() const { return TargetingDataAsset; }
 
 protected:
 

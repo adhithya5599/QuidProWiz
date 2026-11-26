@@ -27,3 +27,17 @@ ABallBase::ABallBase()
 	BallMesh->SetupAttachment(RootComponent);
 	BallMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
+
+void ABallBase::BeginPlay()
+{
+	Super::BeginPlay();
+
+	SpawnTransform = GetActorTransform();
+}
+
+void ABallBase::ResetToSpawn()
+{
+	if (!HasAuthority()) return;
+
+	SetActorTransform(SpawnTransform, false, nullptr, ETeleportType::TeleportPhysics);
+}

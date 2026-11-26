@@ -107,6 +107,22 @@ void ASnitch::Release(const FVector& InArenaCenter)
 	MulticastPlayEffect(false);
 }
 
+void ASnitch::ResetToSpawn()
+{
+	if (!HasAuthority()) return;
+
+	Super::ResetToSpawn();
+	CurrentVelocity = FVector::ZeroVector;
+	JinkVelocity = FVector::ZeroVector;
+	SetSnitchState(ESnitchState::Dormant);
+}
+
+void ASnitch::SetSnitchData(USnitchDataAsset* InData)
+{
+	SnitchData = InData;
+	CollisionComponent->SetSphereRadius(GetData().CatchRadius);
+}
+
 // --- Catching ---------------------------------------------------------------------------------
 
 void ASnitch::OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp,
@@ -191,6 +207,12 @@ void ASnitch::Tick(float DeltaTime)
 	if (!IsActive()) return;
 
 	const USnitchDataAsset& Data = GetData();
+
+	// Follow live tuning of the catch radius.
+	if (!FMath::IsNearlyEqual(CollisionComponent->GetUnscaledSphereRadius(), Data.CatchRadius))
+	{
+		CollisionComponent->SetSphereRadius(Data.CatchRadius);
+	}
 
 	// A broom already touching the Snitch (e.g. one that just recovered from a stun) can catch it too.
 	TArray<AActor*> Overlapping;
