@@ -5,6 +5,7 @@
 #include "GymActionButtonWidget.h"
 #include "GymSubsystem.h"
 #include "GymSnitchTrainer.h"
+#include "GymFlightCourse.h"
 #include "UI/ZoneUIManager.h"
 #include "QuidditchWorldSubsystem.h"
 #include "QuidProWizGameStateBase.h"
@@ -36,7 +37,8 @@ void UGymOverlayWidget::NativeConstruct()
 
 	if (HintText)
 	{
-		HintText->SetText(FText::Format(LOCTEXT("Hint", "{0} to hide or show the panel"), ToggleKey.GetDisplayName()));
+		HintText->SetText(FText::Format(LOCTEXT("Hint", "{0}: cursor for the sliders / back to flying   {1}: hide panel"),
+			CursorKey.GetDisplayName(), ToggleKey.GetDisplayName()));
 	}
 
 	// Show the current zone (the player may spawn inside one before the widget exists).
@@ -207,6 +209,29 @@ void UGymOverlayWidget::ShowStatus(const FText& Message)
 	StatusTimeLeft = 4.f;
 }
 
+void UGymOverlayWidget::SetCursorMode(bool bInCursorMode)
+{
+	bCursorMode = bInCursorMode;
+
+	APlayerController* PC = GetOwningPlayer();
+	if (!PC) return;
+
+	PC->SetShowMouseCursor(bCursorMode);
+	if (bCursorMode)
+	{
+		// Cursor for the panel; the keyboard still flies the broom.
+		FInputModeGameAndUI Mode;
+		Mode.SetHideCursorDuringCapture(false);
+		Mode.SetLockMouseToViewportBehavior(EMouseLockMode::DoNotLock);
+		PC->SetInputMode(Mode);
+	}
+	else
+	{
+		// Mouse captured: it steers the broom.
+		PC->SetInputMode(FInputModeGameOnly());
+	}
+}
+
 void UGymOverlayWidget::SetCollapsed(bool bInCollapsed)
 {
 	bCollapsed = bInCollapsed;
@@ -222,10 +247,24 @@ void UGymOverlayWidget::NativeTick(const FGeometry& MyGeometry, float InDeltaTim
 {
 	Super::NativeTick(MyGeometry, InDeltaTime);
 
-	// Read through the player's input so the key works while flying (the panel never takes focus).
-	if (const APlayerController* PC = GetOwningPlayer(); PC && PC->WasInputKeyJustPressed(ToggleKey))
+	// Start in flying mode once the level has finished its own setup (it may show the cursor).
+	if (!bAppliedInitialMode)
 	{
-		SetCollapsed(!bCollapsed);
+		bAppliedInitialMode = true;
+		SetCursorMode(false);
+	}
+
+	// Read through the player's input so the keys work while flying (the panel never takes focus).
+	if (const APlayerController* PC = GetOwningPlayer())
+	{
+		if (PC->WasInputKeyJustPressed(ToggleKey))
+		{
+			SetCollapsed(!bCollapsed);
+		}
+		if (PC->WasInputKeyJustPressed(CursorKey))
+		{
+			SetCursorMode(!bCursorMode);
+		}
 	}
 
 	// Late possession (the pawn can arrive after the widget is created).
@@ -272,10 +311,29 @@ FText UGymOverlayWidget::BuildStats() const
 	case EZoneType::None:
 		if (Broom)
 		{
-			return FText::Format(LOCTEXT("MoveStats", "Speed {0} / {1} cm/s\nHeight {2} cm"),
+			const FText Flight = FText::Format(LOCTEXT("MoveStats", "Speed {0} / {1} cm/s\nHeight {2} cm"),
 				FText::AsNumber(Broom->GetCurrentSpeed(), &Whole),
 				FText::AsNumber(Broom->GetCurrentMaxSpeed(), &Whole),
 				FText::AsNumber(Broom->GetActorLocation().Z, &Whole));
+
+			const UGymSubsystem* Gym = UGymSubsystem::Get(this);
+			const AGymFlightCourse* Course = Gym ? Gym->GetFlightCourse() : nullptr;
+			if (ShownZone != EZoneType::BroomMovement || !Course || Course->GetNumGates() == 0)
+			{
+				return Flight;
+			}
+
+			auto Seconds = [&OneDecimal](float Value) { return FText::Format(LOCTEXT("SecsC", "{0} s"), FText::AsNumber(Value, &OneDecimal)); };
+			const FText Lap = Course->IsRunning()
+				? FText::Format(LOCTEXT("LapRunning", "Lap: gate {0}/{1}  {2}"), Course->GetNextGate() + 1, Course->GetNumGates(), Seconds(Course->GetCurrentLapSeconds()))
+				: LOCTEXT("LapIdle", "Lap: fly through gate 1 to start");
+			const FText Times = Course->GetLapCount() > 0
+				? FText::Format(LOCTEXT("LapTimes", "Last {0}   Best {1}   Laps {2}"), Seconds(Course->GetLastLapSeconds()), Seconds(Course->GetBestLapSeconds()), Course->GetLapCount())
+				: FText::GetEmpty();
+
+			return Times.IsEmpty()
+				? FText::Format(LOCTEXT("MoveLap", "{0}\n{1}"), Flight, Lap)
+				: FText::Format(LOCTEXT("MoveLapTimes", "{0}\n{1}\n{2}"), Flight, Lap, Times);
 		}
 		break;
 

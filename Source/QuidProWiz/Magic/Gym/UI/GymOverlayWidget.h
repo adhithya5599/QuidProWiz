@@ -20,9 +20,11 @@ class APawn;
 /**
  * The gym's side panel. Follows the player's zone (via UZoneUIManager), shows that zone's
  * title, help text, live stats, sliders and buttons from UGymDataAsset, and runs the buttons
- * through UGymSubsystem. All logic is here; WBP_GymOverlay is layout and style only.
+ * through UGymSubsystem. All logic is here; WBP_GymPanel is layout and style only.
  *
- * Tab (by default) collapses the panel to just the header.
+ * Two modes: flying (mouse steers the broom, no cursor) and tuning (cursor shown to use the
+ * sliders; keyboard flight still works). CursorKey (Tab) switches; HideKey (H) collapses the
+ * panel to its header.
  */
 UCLASS(Abstract)
 class QUIDPROWIZ_API UGymOverlayWidget : public UUserWidget
@@ -40,6 +42,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Gym")
 	bool IsCollapsed() const { return bCollapsed; }
+
+	/** Cursor shown for the panel (true) or captured for flying (false). */
+	UFUNCTION(BlueprintCallable, Category = "Gym")
+	void SetCursorMode(bool bInCursorMode);
 
 	EZoneType GetShownZone() const { return ShownZone; }
 	int32 GetNumRows() const { return Rows.Num(); }
@@ -62,7 +68,11 @@ protected:
 
 	/** Key that collapses/expands the panel. */
 	UPROPERTY(EditDefaultsOnly, Category = "Gym")
-	FKey ToggleKey = EKeys::Tab;
+	FKey ToggleKey = EKeys::H;
+
+	/** Key that switches between flying (mouse steers) and using the panel (cursor shown). */
+	UPROPERTY(EditDefaultsOnly, Category = "Gym")
+	FKey CursorKey = EKeys::Tab;
 
 	/** How often the stats line refreshes. */
 	UPROPERTY(EditDefaultsOnly, Category = "Gym", meta = (ClampMin = "0.02"))
@@ -103,6 +113,8 @@ private:
 
 	EZoneType ShownZone = EZoneType::None;
 	bool bCollapsed = false;
+	bool bCursorMode = false;
+	bool bAppliedInitialMode = false;
 	float TimeUntilStats = 0.f;
 	float StatusTimeLeft = 0.f;
 

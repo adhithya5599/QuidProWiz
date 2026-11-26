@@ -11,10 +11,15 @@ class ABroom;
 /**
  * Client-predicted broom flight built on the Character Movement Component's flying mode.
  *
- * The owning client simulates its moves immediately and the server replays them; mismatches are
- * corrected by the standard CMC reconciliation. Boost is part of each saved move (a compressed
- * flag) so it is predicted too. Speed is derived every frame from the broom's data asset, any AI
- * speed override and the replicated stun multiplier, so tuning changes apply live.
+ * Flight model (CalcVelocity): the input vector says where the rider wants to go and how hard.
+ * The velocity's direction swings toward it at a limited turn rate (fast when slow, slower at top
+ * speed), and its speed eases toward the throttle's target, so turns carve smooth arcs and the
+ * broom keeps its momentum. With no throttle it coasts to a gentle stop; pulling back while moving
+ * brakes. The broom turns to face its direction of travel.
+ *
+ * Everything depends only on the move's input, velocity, boost flag and the data asset, so the
+ * owning client predicts it exactly and the server replays it (standard CMC reconciliation).
+ * Boost is part of each saved move (a compressed flag).
  */
 UCLASS()
 class QUIDPROWIZ_API UBroomMovementComponent : public UCharacterMovementComponent
@@ -35,10 +40,15 @@ public:
 
 	virtual FNetworkPredictionData_Client* GetPredictionData_Client() const override;
 
+	/** Base flight speed after the AI override and stun, before boost (cm/s). */
+	float GetCruiseSpeed() const;
+
 protected:
 
 	virtual void InitializeComponent() override;
 	virtual void UpdateFromCompressedFlags(uint8 Flags) override;
+	virtual void CalcVelocity(float DeltaTime, float Friction, bool bFluid, float BrakingDeceleration) override;
+	virtual FRotator ComputeOrientToMovementRotation(const FRotator& CurrentRotation, float DeltaTime, FRotator& DeltaRotation) const override;
 
 private:
 

@@ -7,6 +7,7 @@
 #include "GymSubsystem.h"
 #include "GymSnitchTrainer.h"
 #include "GymArtGallery.h"
+#include "GymFlightCourse.h"
 #include "Data/GymDataAsset.h"
 #include "Data/GymArtGalleryDataAsset.h"
 #include "Broom.h"
@@ -58,6 +59,25 @@ BEGIN_DEFINE_SPEC(FQuidditchGymSpec, "QuidProWiz.Gym",
 		FQuidditchTestWorld::SetPropertyValue(Trainer, TEXT("ReleaseDelay"), 1.f);
 		Trainer->FinishSpawning(Transform);
 		return Trainer;
+	}
+
+	/** A course with gates at Points, each facing the next one. */
+	AGymFlightCourse* SpawnCourse(const TArray<FVector>& Points, bool bLoop)
+	{
+		TArray<FTransform> GateTransforms;
+		for (int32 Index = 0; Index < Points.Num(); ++Index)
+		{
+			const FVector Next = Points[(Index + 1) % Points.Num()];
+			const FVector Facing = (Index + 1 < Points.Num() || bLoop) ? Next - Points[Index] : Points[Index] - Points[Index - 1];
+			GateTransforms.Add(FTransform(FRotator(0.f, Facing.Rotation().Yaw, 0.f), Points[Index]));
+		}
+
+		const FTransform Transform = FTransform::Identity;
+		AGymFlightCourse* Course = TestWorld->GetWorld()->SpawnActorDeferred<AGymFlightCourse>(AGymFlightCourse::StaticClass(), Transform);
+		FQuidditchTestWorld::SetPropertyValue(Course, TEXT("Gates"), GateTransforms);
+		FQuidditchTestWorld::SetPropertyValue(Course, TEXT("bLoop"), bLoop);
+		Course->FinishSpawning(Transform);
+		return Course;
 	}
 
 	static USnitchDataAsset* MakePracticeData()
@@ -250,6 +270,79 @@ void FQuidditchGymSpec::Define()
 			}
 			TestTrue(TEXT("Released by the match"), GameState->IsSnitchReleased());
 			TestFalse(TEXT("Trainer kept its practice Snitch"), Trainer->GetSnitch()->EndsMatchWhenCaught());
+		});
+	});
+
+	Describe("Flight course", [this]()
+	{
+		It("times a lap through the gates in order and ignores gates out of order", [this]()
+		{
+			AGymFlightCourse* Course = SpawnCourse({ FVector(1000.f, 0.f, 500.f), FVector(2000.f, 0.f, 500.f), FVector(3000.f, 0.f, 500.f) }, /*bLoop*/ false);
+			ABroom* Broom = TestWorld->SpawnBroom(FVector(0.f, 3000.f, 500.f));
+
+			auto FlyThrough = [this, Broom, Course](int32 Gate)
+			{
+				Broom->SetActorLocation(FVector(0.f, 3000.f, 500.f));
+				TestWorld->Tick(0.05f);
+				Broom->SetActorLocation(Course->GetGateWorldTransform(Gate).GetLocation());
+				TestWorld->Tick(0.05f);
+			};
+
+			FlyThrough(1);
+			TestFalse(TEXT("Gate 2 first doesn't start a lap"), Course->IsRunning());
+
+			FlyThrough(0);
+			TestTrue(TEXT("Gate 1 starts the lap"), Course->IsRunning());
+			TestEqual(TEXT("Next is gate 2"), Course->GetNextGate(), 1);
+
+			FlyThrough(2);
+			TestEqual(TEXT("Skipping a gate doesn't count"), Course->GetNextGate(), 1);
+
+			TestWorld->Tick(1.f);
+			FlyThrough(1);
+			FlyThrough(2);
+
+			TestEqual(TEXT("One lap"), Course->GetLapCount(), 1);
+			TestFalse(TEXT("Lap over"), Course->IsRunning());
+			AddInfo(FString::Printf(TEXT("Lap time %.2fs"), Course->GetLastLapSeconds()));
+			TestTrue(TEXT("Lap time recorded"), Course->GetLastLapSeconds() > 1.f);
+			TestEqual(TEXT("Best is the only lap"), Course->GetBestLapSeconds(), Course->GetLastLapSeconds());
+		});
+
+		It("can be flown by a broom steering with the player controls", [this]()
+		{
+			// A loop with right-angle and climbing/diving turns, like the gym course.
+			AGymFlightCourse* Course = SpawnCourse({
+				FVector(0.f, 0.f, 400.f), FVector(2000.f, 0.f, 800.f), FVector(2600.f, 1800.f, 400.f),
+				FVector(1000.f, 2600.f, 1200.f), FVector(-800.f, 1500.f, 600.f) }, /*bLoop*/ true);
+
+			ABroom* Broom = TestWorld->SpawnBroom(FVector(-1500.f, 0.f, 400.f));
+			TestWorld->Possess(Broom);
+			AController* Controller = Broom->GetController();
+
+			// Steer like a player: point the aim at the next gate and hold full throttle.
+			const bool bFinished = TestWorld->TickUntil(40.f, [Course, Broom, Controller]()
+			{
+				const FVector Target = Course->GetGateWorldTransform(Course->GetNextGate()).GetLocation();
+				Controller->SetControlRotation((Target - Broom->GetActorLocation()).Rotation());
+				Broom->PerformMove(1.f);
+				return Course->GetLapCount() >= 1;
+			});
+
+			AddInfo(FString::Printf(TEXT("Lap finished: %s, time %.1fs"), bFinished ? TEXT("yes") : TEXT("no"), Course->GetLastLapSeconds()));
+			TestTrue(TEXT("Completed a lap"), bFinished);
+			TestTrue(TEXT("At a sensible pace"), Course->GetLastLapSeconds() < 20.f);
+		});
+
+		It("resets a lap from the panel command", [this]()
+		{
+			AGymFlightCourse* Course = SpawnCourse({ FVector(1000.f, 0.f, 500.f), FVector(2000.f, 0.f, 500.f) }, true);
+			Course->NotifyGatePassed(0, nullptr);
+			TestTrue(TEXT("Running"), Course->IsRunning());
+
+			Gym()->ExecuteAction(MakeAction(EGymAction::ResetFlightCourse));
+			TestFalse(TEXT("Reset"), Course->IsRunning());
+			TestEqual(TEXT("Back to gate 1"), Course->GetNextGate(), 0);
 		});
 	});
 
