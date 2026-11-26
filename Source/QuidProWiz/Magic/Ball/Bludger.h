@@ -24,6 +24,11 @@ public:
 
 	virtual void Tick(float DeltaTime) override;
 
+	/** Server: back to the spawn point with no target and no speed. */
+	virtual void ResetToSpawn() override;
+
+	UBludgerDataAsset* GetBludgerData() const { return BludgerDataAsset; }
+
 protected:
 
 	virtual void BeginPlay() override;

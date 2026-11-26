@@ -40,6 +40,9 @@ public:
 	ABroom* GetControlledBroom() const;
 	UBroomAIDataAsset* GetAIData() const { return AIData; }
 
+	/** Swap difficulty at runtime (e.g. the gym's Easy/Medium/Hard buttons). Read live by the AI. */
+	void SetAIDataAsset(UBroomAIDataAsset* InAIData) { if (InAIData) { AIData = InAIData; } }
+
 	// Blackboard keys (must match BB_BroomAI).
 	static const FName BBKey_QuaffleLocation;
 	static const FName BBKey_GoalLocation;

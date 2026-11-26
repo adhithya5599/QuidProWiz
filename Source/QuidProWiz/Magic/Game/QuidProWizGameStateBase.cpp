@@ -205,7 +205,7 @@ void AQuidProWizGameStateBase::ReleaseSnitch()
 	bool bReleasedAny = false;
 	for (ASnitch* Snitch : Subsystem->GetSnitches())
 	{
-		if (Snitch->GetSnitchState() == ESnitchState::Dormant)
+		if (Snitch->EndsMatchWhenCaught() && Snitch->GetSnitchState() == ESnitchState::Dormant)
 		{
 			Snitch->Release(ArenaCenter);
 			bReleasedAny = true;
@@ -242,7 +242,10 @@ void AQuidProWizGameStateBase::OnRep_SnitchReleased()
 
 void AQuidProWizGameStateBase::HandleSnitchCaught(ASnitch* Snitch, ABroom* Catcher)
 {
-	if (!HasAuthority() || !Catcher || MatchPhase != EMatchPhase::InProgress) return;
+	if (!HasAuthority() || !Snitch || !Catcher || MatchPhase != EMatchPhase::InProgress) return;
+
+	// Practice Snitches (the gym's trainer) don't decide matches.
+	if (!Snitch->EndsMatchWhenCaught()) return;
 
 	// The catch wins the match for the catcher's team, whatever the score.
 	bEndedBySnitch = true;

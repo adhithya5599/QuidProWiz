@@ -136,6 +136,12 @@ void ABroom::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	// Re-read each frame so live tuning of the data asset applies straight away.
+	if (BroomData)
+	{
+		GetCharacterMovement()->RotationRate.Yaw = BroomData->HeadingRotationRate;
+	}
+
 	UpdateControlHeading(DeltaTime);
 	UpdateMeshTilt(DeltaTime);
 	UpdateBludgerWarning();

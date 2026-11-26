@@ -329,6 +329,18 @@ void ABludger::MulticastPlayHitEffect_Implementation(FVector_NetQuantize Locatio
 	}
 }
 
+void ABludger::ResetToSpawn()
+{
+	if (!HasAuthority()) return;
+
+	Super::ResetToSpawn();
+	CurrentVelocity = FVector::ZeroVector;
+	TargetBroom = nullptr;
+	bTargetLocked = false;
+	TargetLockTimer = 0.f;
+	PickNewWanderTarget();
+}
+
 void ABludger::ResetToRandomLocation()
 {
 	if (!BludgerDataAsset) return;

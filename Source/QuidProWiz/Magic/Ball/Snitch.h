@@ -41,10 +41,22 @@ public:
 	/** Server: wake the Snitch up and let it fly around ArenaCenter. */
 	void Release(const FVector& ArenaCenter);
 
+	/** Server: hide it again at its spawn point, ready for another Release. */
+	virtual void ResetToSpawn() override;
+
 	UFUNCTION(BlueprintPure, Category = "Snitch")
 	ESnitchState GetSnitchState() const { return SnitchState; }
 
 	bool IsActive() const { return SnitchState == ESnitchState::Active; }
+
+	/** False for practice Snitches: the match ignores their catches and never releases them. */
+	bool EndsMatchWhenCaught() const { return bEndsMatchWhenCaught; }
+	void SetEndsMatchWhenCaught(bool bInEndsMatch) { bEndsMatchWhenCaught = bInEndsMatch; }
+
+	USnitchDataAsset* GetSnitchData() const { return SnitchData; }
+
+	/** Swap the tuning asset (e.g. a smaller practice arena). Takes effect immediately. */
+	void SetSnitchData(USnitchDataAsset* InData);
 
 protected:
 
@@ -54,6 +66,10 @@ protected:
 	/** Optional; without one the Snitch uses the data asset class defaults. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Snitch | Data")
 	TObjectPtr<USnitchDataAsset> SnitchData;
+
+	/** Catching this Snitch decides the match. Turn off for gym/practice Snitches. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Snitch")
+	bool bEndsMatchWhenCaught = true;
 
 	UFUNCTION()
 	void OnOverlapBegin(UPrimitiveComponent* OverlappedComp, AActor* OtherActor, UPrimitiveComponent* OtherComp,

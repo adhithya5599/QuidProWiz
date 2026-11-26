@@ -100,6 +100,11 @@ public:
 	/** Server: called by a goal ring when this Quaffle scores. */
 	void NotifyScored();
 
+	/** Server: back to the spawn point, free to pick up (a holder drops it first). */
+	virtual void ResetToSpawn() override;
+
+	UQuaffleDataAsset* GetQuaffleData() const { return QuaffleData; }
+
 protected:
 
 	virtual void BeginPlay() override;
@@ -126,7 +131,6 @@ private:
 	TObjectPtr<AActor> LastThrower = nullptr;
 
 	FVector LastThrownStartLocation = FVector::ZeroVector;
-	FTransform InitialSpawnTransform;
 	FTimerHandle MissRespawnTimerHandle;
 
 	const FQuaffleStateBase& GetState() const { return FQuaffleStateBase::Get(QuaffleState); }
@@ -143,6 +147,8 @@ private:
 	FVector ComputeThrowStartLocation(const AActor* Holder) const;
 	bool LaunchWithVelocity(const FVector& LaunchVelocity, AActor* PreviousHolder, const FVector& StartLocation);
 	void StopProjectile();
-	void ResetToSpawn();
 	void OnMissRespawn();
+
+	/** Copies throw speed and gravity from the data asset onto the projectile movement. */
+	void ApplyFlightTuning();
 };

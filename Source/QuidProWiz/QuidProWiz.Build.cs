@@ -10,9 +10,9 @@ public class QuidProWiz : ModuleRules
 	
 		PublicDependencyModuleNames.AddRange(new string[] 
 		{ "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "AIModule", 
-			"GameplayTasks", "NavigationSystem", "CinematicCamera", "Niagara" });
+			"GameplayTasks", "NavigationSystem", "CinematicCamera", "Niagara", "UMG" });
 
-		PrivateDependencyModuleNames.AddRange(new string[] {  });
+		PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });
 
 		PublicIncludePaths.AddRange(new string[] {
 			"QuidProWiz/Magic",
